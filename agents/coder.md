@@ -6,22 +6,40 @@ Original requirement: "${requirement}"
 
 ${allFiles}
 
-Do NOT use any tools. Provide:
+Do NOT use any tools. Output ONLY valid JSON in the following format:
 
-## 1) Files to create/modify with paths
-
-## 2) Complete code in markdown blocks
-
-## 3) How to test this step works
-
-Example format:
-
-**src/index.js**
-```javascript
-// code here
+```json
+{
+  "status": "SUCCESS",
+  "task_id": 1,
+  "files": [
+    {
+      "path": "path/to/file.js",
+      "action": "create|modify",
+      "language": "javascript|json|html|css",
+      "content": "// Complete file content here\n// Must be properly escaped"
+    }
+  ],
+  "test_instructions": {
+    "setup": ["npm install"],
+    "verify": ["npm start", "curl localhost:3000"],
+    "expected": "What you should see"
+  },
+  "code_quality": {
+    "functions_under_20_lines": true,
+    "error_handling": true,
+    "input_validation": true,
+    "no_duplication": true
+  }
+}
 ```
 
-**Test this step:**
-Open index.html in browser and verify form displays
+Requirements:
+- Small functions (< 20 lines)
+- Handle errors with try/catch
+- Add input validation
+- No code duplication
+- Content must be complete, working code
+- Set status to "FAILURE" with error field if task is unclear
 
-Reply with plain text only.
+Reply with JSON only.

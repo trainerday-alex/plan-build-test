@@ -393,8 +393,48 @@ async function callClaude(prompt, role, projectState = null) {
   }
 }
 
+// Parse JSON response with fallback to text parsing
+function parseAgentResponse(response, agentType) {
+  // Try to extract JSON from the response
+  const jsonMatch = response.match(/```json\s*\n([\s\S]*?)\n\s*```/);
+  if (jsonMatch) {
+    try {
+      const json = JSON.parse(jsonMatch[1]);
+      if (json.status === 'FAILURE') {
+        throw new Error(json.error || 'Agent returned failure status');
+      }
+      return json;
+    } catch (e) {
+      console.warn(`Failed to parse JSON from ${agentType}: ${e.message}`);
+    }
+  }
+  
+  // Try direct JSON parse
+  try {
+    const json = JSON.parse(response);
+    if (json.status === 'FAILURE') {
+      throw new Error(json.error || 'Agent returned failure status');
+    }
+    return json;
+  } catch (e) {
+    // Fall back to text parsing
+    console.warn(`${agentType} response is not valid JSON, using text parsing`);
+    return null;
+  }
+}
+
 // Extract tasks from architect response
 function parseTasks(architectResponse) {
+  // Try JSON parsing first
+  const json = parseAgentResponse(architectResponse, 'Architect');
+  if (json && json.tasks) {
+    return json.tasks.map(task => ({
+      description: task.description,
+      test: task.test_command || 'verify manually'
+    }));
+  }
+  
+  // Fallback to text parsing
   const tasks = [];
   const lines = architectResponse.split('\n');
   let inTaskSection = false;
@@ -426,6 +466,16 @@ function parseTasks(architectResponse) {
 
 // Extract file content from coder responses
 function parseFileContent(response) {
+  // Try JSON parsing first
+  const json = parseAgentResponse(response, 'Coder');
+  if (json && json.files) {
+    return json.files.map(file => ({
+      path: file.path,
+      content: file.content
+    }));
+  }
+  
+  // Fallback to text parsing
   const files = [];
   const lines = response.split('\n');
   let currentFile = null;
@@ -559,13 +609,25 @@ export async function runOrchestrator(projectName, requirement) {
           projectState
         );
         
-        // Parse new refactor tasks
-        state.tasks = parseTasks(refactorResult);
+        // Parse new refactor tasks with JSON support
+        const refactorJson = parseAgentResponse(refactorResult, 'Refactor Analyst');
+        if (refactorJson && refactorJson.refactor_tasks) {
+          state.tasks = refactorJson.refactor_tasks.map(task => ({
+            description: task.description,
+            test: task.test_command || 'npm test'
+          }));
+          console.log('📋 Refactor Analysis:');
+          console.log(`  Strengths: ${refactorJson.assessment.strengths.length} identified`);
+          console.log(`  Improvements: ${refactorJson.assessment.weaknesses.length} needed`);
+          console.log(`  Tasks: ${state.tasks.length} refactoring tasks`);
+          console.log('');
+        } else {
+          // Fallback to text parsing
+          state.tasks = parseTasks(refactorResult);
+        }
         state.completedTasks = []; // Reset completed tasks for refactoring
         state.lastTaskIndex = -1; // Start from beginning
         state.status = 'in_progress';
-        
-        console.log(`📋 Found ${state.tasks.length} refactoring tasks\n`);
         
         projectState.appendTextLog(`\nRefactor Analyst created ${state.tasks.length} tasks:`);
         state.tasks.forEach((task, i) => {
@@ -607,9 +669,21 @@ export async function runOrchestrator(projectName, requirement) {
           projectState
         );
         
-        console.log('📊 Project Review:');
-        console.log(reviewResult);
-        console.log('');
+        // Parse review JSON if available
+        const reviewJson = parseAgentResponse(reviewResult, 'Project Reviewer');
+        if (reviewJson && reviewJson.recommendation) {
+          // Update reviewResult to use the recommendation for downstream logic
+          reviewResult = reviewJson.recommendation.description || reviewResult;
+          console.log('📊 Project Review:');
+          console.log(`  Status: ${reviewJson.project_state.current_status}`);
+          console.log(`  Completed: ${reviewJson.completed_tasks.length} tasks`);
+          console.log(`  Recommendation: ${reviewJson.recommendation.next_action} - ${reviewJson.recommendation.description}`);
+          console.log('');
+        } else {
+          console.log('📊 Project Review:');
+          console.log(reviewResult);
+          console.log('');
+        }
         
         projectState.appendLog({
           action: 'PROJECT_REVIEWED',
@@ -922,8 +996,17 @@ build/
           projectState
         );
         
-        // Parse test files
-        testFiles = parseFileContent(finalTestResult);
+        // Parse test files with JSON support
+        const testJson = parseAgentResponse(finalTestResult, 'Tester');
+        if (testJson && testJson.test_file) {
+          testFiles = [{
+            path: testJson.test_file.path,
+            content: testJson.test_file.content
+          }];
+        } else {
+          // Fallback to general file parsing
+          testFiles = parseFileContent(finalTestResult);
+        }
         
         if (testFiles.length === 0) {
           console.log('  ⚠️  No test files parsed, creating default test...');
