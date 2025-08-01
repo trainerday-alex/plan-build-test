@@ -54,8 +54,8 @@ Every command follows the same three-step cycle:
 - Creates or modifies code
 
 ### 3. Test
-- Runs automated tests
-- Validates everything works
+- Creates automated tests
+- Runs tests to validate everything works
 
 After tests pass, the web server stays running so you can try it yourself.
 
