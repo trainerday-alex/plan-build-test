@@ -212,6 +212,53 @@ class ProjectState {
     ensureDir(this.stateFile);
     writeFileSync(this.stateFile, JSON.stringify(state, null, 2));
   }
+  
+  // Load state for a specific requirement
+  loadRequirementState(requirement) {
+    const fullState = this.loadState();
+    if (!fullState) return null;
+    
+    // If old format (single task list), return null to start fresh
+    if (fullState.tasks && !fullState.requirements) {
+      return null;
+    }
+    
+    // New format: tasks grouped by requirement
+    return fullState.requirements?.[requirement] || null;
+  }
+  
+  // Save state for a specific requirement
+  saveRequirementState(requirement, requirementState) {
+    let fullState = this.loadState() || {};
+    
+    // Migrate from old format if needed
+    if (fullState.tasks && !fullState.requirements) {
+      fullState = {
+        requirements: {
+          [fullState.requirement || 'initial']: {
+            tasks: fullState.tasks,
+            completedTasks: fullState.completedTasks,
+            status: fullState.status,
+            lastTaskIndex: fullState.lastTaskIndex
+          }
+        },
+        currentRequirement: requirement,
+        projectName: fullState.projectName,
+        projectPath: fullState.projectPath
+      };
+    }
+    
+    // Initialize requirements object if needed
+    if (!fullState.requirements) {
+      fullState.requirements = {};
+    }
+    
+    // Save the requirement state
+    fullState.requirements[requirement] = requirementState;
+    fullState.currentRequirement = requirement;
+    
+    this.saveState(fullState);
+  }
 
   appendLog(entry) {
     let log = [];
@@ -446,10 +493,12 @@ export async function runOrchestrator(projectName, requirement) {
   projectState.appendTextLog(`Location: ${projectPath}`);
   projectState.appendTextLog(`${'='.repeat(80)}\n`);
   
+  // Check if this is a refactor request
+  const isRefactor = requirement.toLowerCase().includes('refactor') || 
+                    requirement.toLowerCase().includes('improve existing code') ||
+                    requirement.toLowerCase().includes('clean up');
+
   let state = {
-    projectName,
-    requirement,
-    projectPath,
     tasks: [],
     completedTasks: [],
     status: 'started',
@@ -461,24 +510,75 @@ export async function runOrchestrator(projectName, requirement) {
     if (projectState.exists()) {
       console.log('📂 Existing project found. Reviewing current state...\n');
       
-      // Load existing state
-      const existingState = projectState.loadState();
-      state = { ...state, ...existingState };
+      // For refactor, always start fresh
+      if (isRefactor) {
+        console.log('♻️  Refactor requested - starting fresh task list\n');
+        // state stays as initialized above (empty)
+      } else {
+        // Load existing state for this specific requirement
+        const existingRequirementState = projectState.loadRequirementState(requirement);
+        if (existingRequirementState) {
+          console.log(`📋 Found existing tasks for: "${requirement}"`);
+          state = { ...state, ...existingRequirementState };
+        } else {
+          console.log(`📋 New requirement: "${requirement}" - starting fresh`);
+          // state stays as initialized above (empty)
+        }
+      }
       
       console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
       
-      // Get log summaries
-      const logSummary = projectState.getLogSummary();
-      let taskLogContent = '';
-      try {
-        if (existsSync(projectState.taskLogFile)) {
-          taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
-        }
-      } catch {}
-      
-      // Ask Claude to review and determine next steps
-      let reviewResult = '';
-      try {
+      // Skip review for refactor - go straight to refactor analysis
+      if (isRefactor) {
+        console.log('♻️  Starting refactoring analysis...\n');
+        projectState.appendTextLog(`\nStarting refactoring analysis...`);
+        projectState.appendTaskLog('PLAN', `Refactor: ${requirement}`);
+        
+        // Get all existing files for refactor analysis
+        const allFiles = getAllProjectFiles(projectPath).join('\n');
+        const refactorResult = await callClaude(
+          PROMPTS.refactorAnalyst(requirement, allFiles), 
+          'Refactor Analyst', 
+          projectState
+        );
+        
+        // Parse new refactor tasks
+        state.tasks = parseTasks(refactorResult);
+        state.completedTasks = []; // Reset completed tasks for refactoring
+        state.lastTaskIndex = -1; // Start from beginning
+        state.status = 'in_progress';
+        
+        console.log(`📋 Found ${state.tasks.length} refactoring tasks\n`);
+        
+        projectState.appendTextLog(`\nRefactor Analyst created ${state.tasks.length} tasks:`);
+        state.tasks.forEach((task, i) => {
+          projectState.appendTextLog(`${i + 1}. ${task.description}`, false);
+          projectState.appendTextLog(`   Test: ${task.test}`, false);
+        });
+        
+        projectState.appendLog({
+          action: 'REFACTOR_ANALYSIS_COMPLETE',
+          details: `Created ${state.tasks.length} refactoring tasks`,
+          tasks: state.tasks
+        });
+        
+        // Save updated state
+        projectState.saveRequirementState(requirement, state);
+        
+        // Skip to task execution
+      } else {
+        // Get log summaries for regular review
+        const logSummary = projectState.getLogSummary();
+        let taskLogContent = '';
+        try {
+          if (existsSync(projectState.taskLogFile)) {
+            taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
+          }
+        } catch {}
+        
+        // Ask Claude to review and determine next steps
+        let reviewResult = '';
+        try {
         projectState.appendTextLog(`\nReviewing existing project...`);
         projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
         reviewResult = await callClaude(
@@ -526,11 +626,7 @@ export async function runOrchestrator(projectName, requirement) {
         }
         console.log('');
       }
-      
-      // Check if this is a refactor request
-      const isRefactor = requirement.toLowerCase().includes('refactor') || 
-                        requirement.toLowerCase().includes('improve existing code') ||
-                        requirement.toLowerCase().includes('clean up');
+      } // Close the else block for non-refactor review
       
       // Check if we just need to run tests (but not if it's a refactor request)
       if (!isRefactor && (reviewResult.toLowerCase().includes('run tests') || 
@@ -622,43 +718,6 @@ export async function runOrchestrator(projectName, requirement) {
         }
       }
       
-      // If this is a refactor request on an existing project, create new refactor tasks
-      if (isRefactor) {
-        console.log('♻️  Starting refactoring analysis...\n');
-        projectState.appendTextLog(`\nStarting refactoring analysis...`);
-        projectState.appendTaskLog('PLAN', `Refactor: ${requirement}`);
-        
-        // Get all existing files for refactor analysis
-        const allFiles = getAllProjectFiles(projectPath).join('\n');
-        const refactorResult = await callClaude(
-          PROMPTS.refactorAnalyst(requirement, allFiles), 
-          'Refactor Analyst', 
-          projectState
-        );
-        
-        // Parse new refactor tasks
-        state.tasks = parseTasks(refactorResult);
-        state.completedTasks = []; // Reset completed tasks for refactoring
-        state.lastTaskIndex = -1; // Start from beginning
-        state.status = 'in_progress';
-        
-        console.log(`📋 Found ${state.tasks.length} refactoring tasks\n`);
-        
-        projectState.appendTextLog(`\nRefactor Analyst created ${state.tasks.length} tasks:`);
-        state.tasks.forEach((task, i) => {
-          projectState.appendTextLog(`${i + 1}. ${task.description}`, false);
-          projectState.appendTextLog(`   Test: ${task.test}`, false);
-        });
-        
-        projectState.appendLog({
-          action: 'REFACTOR_ANALYSIS_COMPLETE',
-          details: `Created ${state.tasks.length} refactoring tasks`,
-          tasks: state.tasks
-        });
-        
-        // Save updated state
-        projectState.saveState(state);
-      }
       
     } else {
       console.log('📄 New project. Creating from scratch...\n');
@@ -772,7 +831,7 @@ build/
       });
       
       // Save initial state
-      projectState.saveState(state);
+      projectState.saveRequirementState(requirement, state);
     }
     
     // Execute remaining tasks
@@ -809,7 +868,7 @@ build/
       // Update state
       state.completedTasks.push(task.description);
       state.lastTaskIndex = i;
-      projectState.saveState(state);
+      projectState.saveRequirementState(requirement, state);
       
       projectState.appendLog({
         action: 'TASK_COMPLETE',
@@ -1050,7 +1109,7 @@ app.listen(PORT, () => {
     
     // Update final state
     state.status = 'completed';
-    projectState.saveState(state);
+    projectState.saveRequirementState(requirement, state);
     
     projectState.appendLog({
       action: 'PROJECT_COMPLETE',
@@ -1179,7 +1238,7 @@ app.listen(PORT, () => {
   } catch (error) {
     state.status = 'error';
     state.error = error.message;
-    projectState.saveState(state);
+    projectState.saveRequirementState(requirement, state);
     
     projectState.appendTextLog(`\n${'='.repeat(80)}`);
     projectState.appendTextLog(`CRITICAL ERROR: ${error.message}`);
