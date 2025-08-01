@@ -13,20 +13,23 @@ const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects')
 
 // Enhanced prompts for task-based approach
 const PROMPTS = {
-  reviewProject: (projectName, log, requirement) => `Review this existing project and determine what needs to be done next.
+  reviewProject: (projectName, log, requirement, taskLog) => `STEP 1: REVIEW
+First, review the project history and current state.
 
 Project: ${projectName}
 Current Requirement: ${requirement}
 
-Project Log:
+Task Log (Plan/Build/Test cycles):
+${taskLog || 'No task log yet'}
+
+Detailed Log Summary:
 ${log}
 
-Based on the log, provide:
-1) COMPLETED TASKS (what's already done)
-2) REMAINING TASKS (what still needs to be done)
-3) NEXT ACTION (the immediate next step)
+Based on this review, provide:
+1) WHAT'S BEEN DONE (completed cycles)
+2) CURRENT STATE (working? broken? needs improvement?)
+3) NEXT ACTION (what should we plan next?)
 
-If everything is complete, just indicate we should run tests.
 Reply with plain text only.`,
 
   architect: (req) => `As a software architect, create a task-based blueprint for: "${req}".
@@ -102,6 +105,7 @@ class ProjectState {
     this.logFile = join(projectPath, 'orchestrator-log.json');
     this.stateFile = join(projectPath, 'orchestrator-state.json');
     this.textLogFile = join(projectPath, 'log.txt');
+    this.taskLogFile = join(projectPath, 'task-log.txt');
   }
 
   exists() {
@@ -159,6 +163,19 @@ class ProjectState {
       appendFileSync(this.textLogFile, logEntry);
     } else {
       writeFileSync(this.textLogFile, logEntry);
+    }
+  }
+
+  // Append to task log
+  appendTaskLog(cycle, message) {
+    ensureDir(this.taskLogFile);
+    const timestamp = new Date().toISOString();
+    const logEntry = `[${timestamp}] ${cycle}: ${message}\n`;
+    
+    if (existsSync(this.taskLogFile)) {
+      appendFileSync(this.taskLogFile, logEntry);
+    } else {
+      writeFileSync(this.taskLogFile, logEntry);
     }
   }
 }
@@ -361,15 +378,22 @@ export async function runOrchestrator(projectName, requirement) {
       
       console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
       
-      // Get log summary
+      // Get log summaries
       const logSummary = projectState.getLogSummary();
+      let taskLogContent = '';
+      try {
+        if (existsSync(projectState.taskLogFile)) {
+          taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
+        }
+      } catch {}
       
       // Ask Claude to review and determine next steps
       let reviewResult = '';
       try {
         projectState.appendTextLog(`\nReviewing existing project...`);
+        projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
         reviewResult = await callClaude(
-          PROMPTS.reviewProject(projectName, logSummary, requirement),
+          PROMPTS.reviewProject(projectName, logSummary, requirement, taskLogContent),
           'Project Reviewer',
           projectState
         );
@@ -516,9 +540,70 @@ export async function runOrchestrator(projectName, requirement) {
       });
       projectState.appendTextLog(`\nCreated new project directory`);
       
+      // Initialize git repository
+      console.log('📦 Initializing git repository...');
+      projectState.appendTextLog(`\nInitializing git repository...`);
+      
+      try {
+        await execAsync('git init', { cwd: projectPath });
+        
+        // Create .gitignore
+        const gitignoreContent = `# Dependencies
+node_modules/
+npm-debug.log*
+
+# Test results
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+log.txt
+orchestrator-log.json
+
+# Build outputs
+dist/
+build/
+`;
+        
+        writeFileSync(join(projectPath, '.gitignore'), gitignoreContent);
+        console.log('  ✓ Git repository initialized with .gitignore');
+        
+        // Initial commit
+        await execAsync('git add -A', { cwd: projectPath });
+        await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
+        console.log('  ✓ Created initial commit');
+        
+        projectState.appendLog({
+          action: 'GIT_INITIALIZED',
+          details: 'Created git repo and .gitignore with initial commit'
+        });
+        projectState.appendTextLog(`Git repository initialized with .gitignore and initial commit`);
+        
+      } catch (gitError) {
+        console.log('  ⚠️  Git init failed (git may not be installed)');
+        projectState.appendTextLog(`WARNING: Git init failed - ${gitError.message}`);
+      }
+      
       // Get architect blueprint
       console.log('🏗️  Architect designing solution...');
       projectState.appendTextLog(`\nArchitect designing solution...`);
+      projectState.appendTaskLog('PLAN', `New project: ${requirement}`);
       const architectResult = await callClaude(PROMPTS.architect(requirement), 'Architect', projectState);
       
       // Parse tasks
@@ -555,6 +640,7 @@ export async function runOrchestrator(projectName, requirement) {
       // Coder implements the task
       console.log('💻 Coder implementing task...');
       projectState.appendTextLog(`\nCoder implementing: ${task.description}`);
+      projectState.appendTaskLog('BUILD', `Task ${i + 1}: ${task.description}`);
       const coderResult = await callClaude(
         PROMPTS.coder(requirement, task.description, allFiles), 
         'Coder',
@@ -585,6 +671,7 @@ export async function runOrchestrator(projectName, requirement) {
       
       console.log(`  ✓ Task ${i + 1} completed`);
       projectState.appendTextLog(`Task ${i + 1} completed successfully\n`);
+      projectState.appendTaskLog('TEST', `Task ${i + 1} ready for testing`);
     }
     
     // Create final test with retry logic
@@ -863,6 +950,17 @@ app.listen(PORT, () => {
       });
       
       console.log(`\n✅ All tests passed!`);
+      projectState.appendTaskLog('TEST', 'All automated tests passed');
+      
+      // Commit the completed work
+      console.log('\n📦 Committing completed work...');
+      try {
+        await execAsync('git add -A', { cwd: projectPath });
+        await execAsync(`git commit -m "Completed: ${requirement.substring(0, 50)}..."`, { cwd: projectPath });
+        console.log('  ✓ Changes committed');
+      } catch (e) {
+        console.log('  ⚠️  No changes to commit');
+      }
       
       // Start the server for manual testing
       console.log(`\n🌐 Starting web server for manual testing...`);

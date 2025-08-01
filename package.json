@@ -9,8 +9,12 @@
   "type": "module",
   "scripts": {
     "test": "node --test test.js",
-    "start": "node orchestrator.js",
-    "orchestrate": "node orchestrator.js"
+    "new-project": "node orchestrator-commands.js new-project",
+    "task": "node orchestrator-commands.js task",
+    "fix": "node orchestrator-commands.js fix",
+    "refactor": "node orchestrator-commands.js refactor",
+    "change-project": "node orchestrator-commands.js change-project",
+    "status": "node orchestrator-commands.js status"
   },
   "dependencies": {
     "dotenv": "^16.0.0"

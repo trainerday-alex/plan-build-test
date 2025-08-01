@@ -1,44 +1,44 @@
 # The Three-Part Flow Orchestrator
 
-A smart, task-based AI orchestrator that builds and maintains working software projects by coordinating three specialized agents: Architect, Coder, and Tester. Features intelligent project continuation, detailed logging, and automated testing.
+A simple AI orchestrator that builds working software through a repeating three-step cycle: **Plan/Review → Build → Test**
 
-## Overview
+## Quick Start
 
-This orchestrator takes a project name and requirement, then automatically:
-1. Creates new projects or intelligently continues existing ones
-2. Breaks down requirements into testable tasks
-3. Implements each task incrementally with full state tracking
-4. Creates all necessary files, servers, and tests
-5. Manages the complete project lifecycle with detailed logs
+```bash
+# Install dependencies
+npm install
+
+# Create a new project
+npm run new-project my-app "build a todo list with add and delete"
+
+# Add features (works on current project)
+npm run task "add ability to edit todos"
+
+# Fix issues
+npm run fix
+
+# Improve code
+npm run refactor
+```
 
 ## How It Works
 
-### The Three Agents
+Every command follows the same three-step cycle:
 
-1. **Architect Agent**
-   - Analyzes requirements and creates a task-based blueprint
-   - Identifies runtime requirements (web servers, databases, etc.)
-   - Breaks work into independently testable steps
-   - Defines success criteria and final validation tests
+### 1. Plan/Review
+- Reviews logs and current state
+- Understands what's been done
+- Plans the next action
 
-2. **Coder Agent**
-   - Implements each task from the Architect's plan
-   - Creates/updates files incrementally
-   - Builds on previous work
-   - Provides test instructions for each step
+### 2. Build
+- Implements the plan
+- Creates or modifies code
 
-3. **Tester Agent**
-   - Creates comprehensive test suites
-   - Writes Playwright tests for UI validation
-   - Ensures the final product works as specified
+### 3. Test
+- Runs automated tests
+- Validates everything works
 
-### The Process
-
-1. **Requirement Input** → "Build a login page with specific credentials"
-2. **Architect Planning** → Creates numbered task list with test criteria
-3. **Incremental Building** → Each task is implemented and verified
-4. **Final Validation** → Playwright tests confirm everything works
-5. **Ready Project** → Complete with server, tests, and documentation
+After tests pass, the web server stays running so you can try it yourself.
 
 ## Setup
 
@@ -55,182 +55,76 @@ PROJECTS_DIR=/Users/alex/Documents/Projects/ai-projects
 
 If not specified, projects will be created in `./projects/`
 
-## Usage
+## Commands
 
-### Smart Orchestrator (Recommended)
+### Create a New Project
+```bash
+npm run new-project <name> <description>
+```
+Creates a new project and sets it as current. Includes:
+- Project folder with git init
+- All necessary files and dependencies
+- First working implementation
 
-The smart orchestrator requires both project name and description, and intelligently manages project state:
+### Work on Current Project
+```bash
+npm run task <description>    # Add new feature
+npm run fix                   # Fix failing tests
+npm run refactor             # Improve code quality
+npm run status               # Show project progress
+```
+
+### Switch Projects
+```bash
+npm run change-project <name>  # Switch to existing project
+```
+
+## What Gets Created
+
+Each project includes:
+- Working application code
+- Web server (when needed)
+- Automated tests
+- Git repository
+- Comprehensive logs:
+  - `log.txt` - Detailed execution log
+  - `task-log.txt` - High-level Plan/Build/Test cycles
+
+## Example Workflow
 
 ```bash
-node orchestrator-smart.js "<project-name>" "<requirement>"
+# Day 1: Create a login page
+npm run new-project login-app "build a login page"
+# (builds and tests automatically, server starts for manual testing)
+
+# Day 2: Add password reset
+npm run task "add forgot password link and reset flow"
+# (reviews current state, plans, builds, tests)
+
+# Something broke?
+npm run fix
+# (reviews logs, identifies issue, fixes it, tests)
+
+# Code needs cleanup?
+npm run refactor
+# (improves code structure while maintaining functionality)
 ```
-
-#### Examples
-
-Create a new project:
-```bash
-node orchestrator-smart.js "login-page" "build a login page with email test@example.com and password secret123"
-```
-
-Continue an existing project:
-```bash
-# Run the same command - it will continue where it left off
-node orchestrator-smart.js "login-page" "build a login page with email test@example.com and password secret123"
-```
-
-Add features to existing project:
-```bash
-node orchestrator-smart.js "login-page" "add forgot password functionality"
-```
-
-### Basic Orchestrator (Legacy)
-
-For simple one-off projects without state management:
-```bash
-node orchestrator-tasks.js "create a calculator with add and subtract"
-```
-
-### What Gets Created
-
-Projects are created in your configured directory with:
-- Complete source code (HTML, CSS, JavaScript)
-- Web server configuration (Express.js or http-server)
-- Playwright tests with automatic server management
-- Package.json with all dependencies
-- Project state files:
-  - `orchestrator-state.json` - Current progress and tasks
-  - `orchestrator-log.json` - Detailed timestamped action log
-  - `playwright.config.js` - Test configuration with server lifecycle
-
-## Project Structure
-
-```
-the-three-part-flow/
-├── orchestrator-tasks.js    # Main task-based orchestrator
-├── orchestrator.js          # Original simple orchestrator
-├── projects/                # Generated projects go here
-│   └── [project-name]/
-│       ├── src/            # Source code
-│       ├── test/           # Test files
-│       ├── server.js       # Web server (if needed)
-│       ├── package.json    # Dependencies
-│       └── orchestrator-results.json
-└── test.js                 # Orchestrator tests
-```
-
-## Running Generated Projects
-
-After the orchestrator completes:
-
-```bash
-cd /path/to/your/projects/[project-name]
-npm install
-npm test         # Automatically starts server, runs tests, stops server
-```
-
-For manual testing:
-```bash
-npm start        # Starts the web server
-# Open http://localhost:3000 in your browser
-```
-
-Additional test options:
-```bash
-npm run test:ui       # Playwright UI mode
-npm run test:headed   # Run tests with visible browser
-```
-
-## How the Task-Based Approach Works
-
-1. **Architect creates a numbered task list:**
-   ```
-   1. Create HTML login form (test: form displays in browser)
-   2. Add CSS styling (test: form is centered and styled)
-   3. Add validation logic (test: correct credentials show success)
-   4. Setup web server (test: page loads at localhost:3000)
-   5. Create Playwright test (test: automated login works)
-   ```
-
-2. **Each task is executed independently:**
-   - Coder implements the specific task
-   - Files are created/updated
-   - Test instructions provided
-   - Next task builds on previous work
-
-3. **Final validation:**
-   - Playwright tests verify end-to-end functionality
-   - Web server is configured if needed
-   - All dependencies are included
-
-## Architecture Evolution
-
-### Version 1: Simple Orchestrator (`orchestrator.js`)
-- Single pass through Architect → Coder → Tester
-- Sometimes missed files (HTML, CSS)
-- No incremental building
-
-### Version 2: Task-Based Orchestrator (`orchestrator-tasks.js`)
-- Architect creates testable task list
-- Incremental building with verification
-- Handles complex projects better
-- Creates all necessary files
-- Includes runtime requirements (servers, etc.)
-
-### Version 3: Smart Orchestrator (`orchestrator-smart.js`)
-- **Project Management**: Named projects with dedicated directories
-- **State Persistence**: Tracks progress across sessions
-- **Intelligent Continuation**: Resumes from last completed task
-- **Project Evolution**: Can add features to existing projects
-- **Detailed Logging**: Full audit trail of all actions
-- **Environment Configuration**: Uses .env for project directory
-
-## Key Features
-
-- **Natural Language Input**: Describe what you want in plain English
-- **Complete Projects**: Not just code snippets, but working applications
-- **Test-Driven**: Each step has clear test criteria
-- **Incremental Building**: Complex projects built step-by-step
-- **Runtime Awareness**: Creates servers, configs, and tests as needed
-- **State Management**: Projects can be paused and resumed anytime
-- **Smart Continuation**: Intelligently continues where it left off
-- **Feature Addition**: Add new features to existing projects
-- **Automated Testing**: Playwright tests with automatic server lifecycle
-- **Detailed Logging**: Complete audit trail of all actions
-
-## Troubleshooting
-
-**If the orchestrator times out:**
-- Try a simpler requirement first
-- Break complex requirements into smaller pieces
-- Run with more specific requirements
-
-**If files are missing:**
-- Check orchestrator-results.json for what was processed
-- The task-based orchestrator (`orchestrator-tasks.js`) is more reliable
-- Ensure your requirement is clear and specific
 
 ## The Philosophy
 
-This project demonstrates the "Three-Part Flow" for human/AI collaboration:
+Simple is better. Every action follows the same three steps:
 
-1. **Discovery & Planning** - Architect understands and plans
-2. **Build It** - Coder implements incrementally  
-3. **Validate & Evolve** - Tester ensures it works
+1. **Plan/Review** - Understand where we are, decide what to do
+2. **Build** - Implement the plan
+3. **Test** - Verify it works
 
-The key insight: breaking work into small, testable tasks with clear success criteria produces better results than trying to build everything at once.
+The human stays in control, deciding what happens next after each cycle.
 
-## Development
+## Troubleshooting
 
-To improve the orchestrator:
-1. Run it with various requirements
-2. Identify what fails or times out
-3. Update the prompts or task handling
-4. Test the improvements
-
-The orchestrator can even improve itself:
-```bash
-node orchestrator-tasks.js "add better error handling to orchestrator-tasks.js"
-```
+- **Claude timeouts**: The orchestrator will use local analysis as fallback
+- **Test failures**: Run `npm run fix` to diagnose and repair
+- **Need to see details**: Check `log.txt` and `task-log.txt` in your project
 
 ## License
 
