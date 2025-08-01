@@ -25,7 +25,7 @@ This is an AI orchestrator that builds working software through a three-step cyc
 
 ### Core Components
 
-1. **orchestrator-smart.js** - Main orchestration engine that manages the three-part flow
+1. **orchestrator.js** - Main orchestration engine that manages the three-part flow
    - Handles project state management and logging
    - Coordinates the Plan/Review → Build → Test cycle
    - Manages fallback to local analysis when Claude is unavailable
@@ -35,9 +35,6 @@ This is an AI orchestrator that builds working software through a three-step cyc
    - Manages current project context (stored in `.current-project`)
    - Handles automatic git commits at strategic checkpoints
 
-3. **orchestrator-tasks.js** - Task breakdown and management
-   - Analyzes logs to extract high-level task summaries
-   - Maintains task-log.txt for tracking Plan/Build/Test cycles
 
 ### The Three-Part Flow
 

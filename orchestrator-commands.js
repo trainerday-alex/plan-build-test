@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runOrchestrator } from './orchestrator-smart.js';
+import { runOrchestrator } from './orchestrator.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { exec } from 'child_process';
