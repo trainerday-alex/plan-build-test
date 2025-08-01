@@ -1,0 +1,13 @@
+{
+  "name": "addition-function",
+  "version": "1.0.0",
+  "description": "A simple function that adds two numbers",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  }
+}

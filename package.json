@@ -1,0 +1,16 @@
+{
+  "name": "three-part-flow-orchestrator",
+  "version": "1.0.0",
+  "description": "A simple orchestrator for architect, coder, and tester agents",
+  "main": "orchestrator.js",
+  "bin": {
+    "orchestrator": "./orchestrator.js"
+  },
+  "type": "module",
+  "scripts": {
+    "test": "node --test test.js",
+    "start": "node orchestrator.js",
+    "orchestrate": "node orchestrator.js"
+  },
+  "dependencies": {}
+}

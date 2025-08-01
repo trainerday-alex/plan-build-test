@@ -1,0 +1,13 @@
+{
+  "name": "calculator",
+  "version": "1.0.0",
+  "description": "A simple calculator with add and subtract functions",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "node test/calculator.test.js"
+  },
+  "keywords": ["calculator", "math", "add", "subtract"],
+  "author": "",
+  "license": "MIT"
+}
