@@ -19,7 +19,24 @@ const TEMPLATES_DIR = AGENTS_PATH;
 function loadTemplate(templateName) {
   const templatePath = join(TEMPLATES_DIR, `${templateName}.md`);
   try {
-    return readFileSync(templatePath, 'utf8');
+    let content = readFileSync(templatePath, 'utf8');
+    
+    // Strip YAML frontmatter if present (for Basic Memory files)
+    if (content.startsWith('---\n')) {
+      const endOfFrontmatter = content.indexOf('\n---\n', 4);
+      if (endOfFrontmatter !== -1) {
+        content = content.substring(endOfFrontmatter + 5).trim();
+      }
+    }
+    
+    // Also strip any markdown headers that duplicate the template name
+    const lines = content.split('\n');
+    if (lines[0].startsWith('# ') && lines[0].toLowerCase().includes(templateName.toLowerCase())) {
+      lines.shift(); // Remove the first line
+      content = lines.join('\n').trim();
+    }
+    
+    return content;
   } catch (error) {
     console.error(`Warning: Could not load template ${templateName}: ${error.message}`);
     return null;
