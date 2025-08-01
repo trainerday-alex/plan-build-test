@@ -39,28 +39,45 @@ function extractCodeBlocks(text) {
 
 // Enhanced prompts that ask for file creation
 const PROMPTS = {
-  architect: (req) => `As a software architect, provide a TEXT-ONLY blueprint for: "${req}".
+  architect: (req) => `As a software architect, create a task-based blueprint for: "${req}".
 
-Do NOT use any tools. Just describe:
-1) Project structure with specific file paths
-2) Function signatures and module exports
-3) Implementation approach
+Do NOT use any tools. Provide:
 
-Format your response with clear file paths like:
-- src/index.js
-- src/utils/helper.js
-- test/index.test.js
+1) RUNTIME REQUIREMENTS
+- What needs to run for this to work? (web server, database, etc.)
+- How will we test it end-to-end?
 
-Be specific about what each file should contain. Reply with plain text only.`,
+2) TASK LIST (numbered, in order)
+Each task should be:
+- Independently testable
+- Have clear success criteria
+- Build towards the final goal
+
+Example:
+1. Create static HTML login form (test: form displays in browser)
+2. Add client-side validation (test: shows error for invalid email)
+3. Add authentication logic (test: correct credentials show success)
+4. Setup local web server (test: page loads at localhost:3000)
+5. Add Playwright test (test: automated login flow passes)
+
+3) FILE STRUCTURE
+List all files needed with their purpose
+
+4) FINAL VALIDATION TEST
+Describe the Playwright test that proves everything works
+
+Reply with plain text only.`,
   
-  coder: (req, blueprint) => `As a coder, provide TEXT-ONLY implementation for: "${req}"
+  coder: (req, task, previousCode) => `As a coder, implement this specific task: "${task}"
 
-Blueprint:
-${blueprint}
+Original requirement: "${req}"
 
-Do NOT use any tools. For each file mentioned, provide:
-1) The file path (e.g., src/index.js)
-2) The complete code in a markdown code block
+${previousCode ? `Previous code:\n${previousCode}\n` : ''}
+
+Do NOT use any tools. Provide:
+1) Files to create/modify with paths
+2) Complete code in markdown blocks
+3) How to test this step works
 
 Example format:
 **src/index.js**
@@ -68,7 +85,10 @@ Example format:
 // code here
 \`\`\`
 
-Reply with plain text and code blocks only.`,
+**Test this step:**
+Open index.html in browser and verify form displays
+
+Reply with plain text only.`,
   
   tester: (req, code) => `As a tester, provide TEXT-ONLY test files for: "${req}"
 
@@ -116,9 +136,9 @@ function parseFileContent(response) {
   
   for (const line of lines) {
     // Check for file path patterns
-    if (line.match(/^(src\/|test\/|tests\/|lib\/|\.\/)?[\w\-\/]+\.(js|json|md)$/i) || 
-        line.match(/^\*\*[\w\-\/]+\.(js|json|md)\*\*/) ||
-        line.match(/^#+\s*[\w\-\/]+\.(js|json|md)/)) {
+    if (line.match(/^(src\/|test\/|tests\/|lib\/|\.\/)?[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)$/i) || 
+        line.match(/^\*\*[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)\*\*/) ||
+        line.match(/^#+\s*[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)/)) {
       if (currentFile && codeContent.length > 0) {
         files.push({ path: currentFile, content: codeContent.join('\n') });
       }

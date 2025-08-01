@@ -12,5 +12,7 @@
     "start": "node orchestrator.js",
     "orchestrate": "node orchestrator.js"
   },
-  "dependencies": {}
+  "dependencies": {
+    "dotenv": "^16.0.0"
+  }
 }
