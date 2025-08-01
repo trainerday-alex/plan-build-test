@@ -1,6 +1,8 @@
-# The Three-Part Flow Orchestrator
+# Plan-Build-Test Loop
 
-A simple AI orchestrator that builds working software through a repeating three-step cycle: **Plan/Review → Build → Test**
+An AI orchestrator that builds working software through a simple, repeating cycle: **Plan/Review → Build → Test**
+
+Every action follows the same three steps, keeping development predictable and testable.
 
 ## Quick Start
 
@@ -85,10 +87,20 @@ Each project includes:
 - Working application code
 - Web server (when needed)
 - Automated tests
-- Git repository
+- Git repository with automatic commits
 - Comprehensive logs:
   - `log.txt` - Detailed execution log
   - `task-log.txt` - High-level Plan/Build/Test cycles
+
+## Git Integration
+
+The loop automatically commits your code:
+- **New Project**: Initial commit after setup
+- **Before Tasks**: Commits current state as checkpoint
+- **After Success**: Commits completed work
+- **Before Refactor**: Saves working version
+
+This creates a clean git history showing your project evolution.
 
 ## Example Workflow
 
@@ -110,13 +122,19 @@ npm run refactor
 # (improves code structure while maintaining functionality)
 ```
 
-## The Philosophy
+## Why Plan-Build-Test?
 
-Simple is better. Every action follows the same three steps:
+This loop mirrors how developers actually work:
 
-1. **Plan/Review** - Understand where we are, decide what to do
-2. **Build** - Implement the plan
+1. **Plan/Review** - Check logs, understand current state, plan changes
+2. **Build** - Write the code
 3. **Test** - Verify it works
+
+By enforcing this pattern, the AI:
+- Never codes blindly without reviewing first
+- Always tests before declaring success
+- Maintains clear logs of every decision
+- Commits at strategic checkpoints
 
 The human stays in control, deciding what happens next after each cycle.
 

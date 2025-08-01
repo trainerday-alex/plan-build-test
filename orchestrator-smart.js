@@ -4,16 +4,41 @@ import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, append
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 
 dotenv.config();
 
 const execAsync = promisify(exec);
 const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const TEMPLATES_DIR = join(__dirname, 'templates');
+
+// Load template from file
+function loadTemplate(templateName) {
+  const templatePath = join(TEMPLATES_DIR, `${templateName}.md`);
+  try {
+    return readFileSync(templatePath, 'utf8');
+  } catch (error) {
+    console.error(`Warning: Could not load template ${templateName}: ${error.message}`);
+    return null;
+  }
+}
+
 
 // Enhanced prompts for task-based approach
 const PROMPTS = {
-  reviewProject: (projectName, log, requirement, taskLog) => `STEP 1: REVIEW
+  reviewProject: (projectName, log, requirement, taskLog) => {
+    const template = loadTemplate('project-reviewer');
+    if (template) {
+      return template
+        .replace('${projectName}', projectName)
+        .replace('${requirement}', requirement)
+        .replace('${taskLog}', taskLog || 'No task log yet')
+        .replace('${log}', log);
+    }
+    // Fallback to inline template
+    return `STEP 1: REVIEW
 First, review the project history and current state.
 
 Project: ${projectName}
@@ -30,9 +55,16 @@ Based on this review, provide:
 2) CURRENT STATE (working? broken? needs improvement?)
 3) NEXT ACTION (what should we plan next?)
 
-Reply with plain text only.`,
+Reply with plain text only.`;
+  },
 
-  architect: (req) => `As a software architect, create a task-based blueprint for: "${req}".
+  architect: (req) => {
+    const template = loadTemplate('architect');
+    if (template) {
+      return template.replace('${requirement}', req);
+    }
+    // Fallback to inline template
+    return `As a software architect, create a task-based blueprint for: "${req}".
 
 Do NOT use any tools. Provide:
 
@@ -56,9 +88,19 @@ List all files needed with their purpose
 4) FINAL VALIDATION TEST
 Describe the Playwright test that proves everything works
 
-Reply with plain text only.`,
+Reply with plain text only.`;
+  },
   
-  coder: (req, task, allFiles) => `As a coder, implement this specific task: "${task}"
+  coder: (req, task, allFiles) => {
+    const template = loadTemplate('coder');
+    if (template) {
+      return template
+        .replace('${task}', task)
+        .replace('${requirement}', req)
+        .replace('${allFiles}', allFiles ? `Current project files:\n${allFiles}\n` : '');
+    }
+    // Fallback to inline template
+    return `As a coder, implement this specific task: "${task}"
 
 Original requirement: "${req}"
 
@@ -78,9 +120,16 @@ Example format:
 **Test this step:**
 Open index.html in browser and verify form displays
 
-Reply with plain text only.`,
+Reply with plain text only.`;
+  },
   
-  finalTest: (req, projectPath) => `Create a simple Playwright test for: "${req}"
+  finalTest: (req, projectPath) => {
+    const template = loadTemplate('tester');
+    if (template) {
+      return template.replace('${requirement}', req);
+    }
+    // Fallback to inline template
+    return `Create a simple Playwright test for: "${req}"
 
 The web server will be started automatically by Playwright config.
 
@@ -95,7 +144,8 @@ Provide:
 // your test code here
 \`\`\`
 
-Reply with plain text only.`
+Reply with plain text only.`;
+  }
 };
 
 // Project state management
