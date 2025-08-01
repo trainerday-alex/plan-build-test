@@ -1047,18 +1047,20 @@ app.listen(PORT, () => {
   }
 }
 
-// CLI interface
-if (process.argv.length < 4) {
-  console.error('❌ Error: Both project name and requirement are required');
-  console.error('\nUsage:');
-  console.error('  node orchestrator-smart.js "<project-name>" "<requirement>"');
-  console.error('\nExamples:');
-  console.error('  node orchestrator-smart.js "todo-app" "build a todo list with add and delete"');
-  console.error('  node orchestrator-smart.js "login-page" "create login page with test@example.com/secret123"');
-  process.exit(1);
+// CLI interface - only run if called directly
+if (import.meta.url === `file://${process.argv[1]}`) {
+  if (process.argv.length < 4) {
+    console.error('❌ Error: Both project name and requirement are required');
+    console.error('\nUsage:');
+    console.error('  node orchestrator-smart.js "<project-name>" "<requirement>"');
+    console.error('\nExamples:');
+    console.error('  node orchestrator-smart.js "todo-app" "build a todo list with add and delete"');
+    console.error('  node orchestrator-smart.js "login-page" "create login page with test@example.com/secret123"');
+    process.exit(1);
+  }
+
+  const projectName = process.argv[2];
+  const requirement = process.argv.slice(3).join(' ');
+
+  runOrchestrator(projectName, requirement);
 }
-
-const projectName = process.argv[2];
-const requirement = process.argv.slice(3).join(' ');
-
-runOrchestrator(projectName, requirement);
