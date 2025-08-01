@@ -9,20 +9,22 @@ Every action follows the same three steps with dedicated AI agents (Architect, C
 ## Quick Start
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 npm install
 
-# Create a new project
+# 2. Configure project directory
+cp .env.example .env
+# Edit .env and update PROJECTS_DIR to your preferred location
+
+# 3. Create your first project
 npm run new-project my-app "build a todo list with add and delete"
 
-# Add features (works on current project)
+# 4. Add features (works on current project)
 npm run task "add ability to edit todos"
 
-# Fix issues
-npm run fix
-
-# Improve code
-npm run refactor
+# 5. Fix issues or improve code
+npm run fix                   # Fix failing tests
+npm run refactor             # Improve code quality
 ```
 
 ## How It Works
@@ -52,7 +54,12 @@ npm install
 ```
 
 ### 2. Configure Project Directory
-Create a `.env` file with your preferred project location:
+Copy the example environment file and update it with your preferred project location:
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set your project directory:
 ```
 PROJECTS_DIR=/Users/alex/Documents/Projects/ai-projects
 ```
