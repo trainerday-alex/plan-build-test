@@ -6,6 +6,15 @@ This implementation is based on "The Three-Part Flow" philosophy - a business-fi
 
 Every action follows the same three steps with dedicated AI agents (Architect, Coder, Tester, Refactor Analyst) working together, ensuring each cycle produces deployable, testable software that demonstrates concrete business value.
 
+## Requirements
+
+- **Claude Code CLI**: Install Claude Code from https://docs.anthropic.com/en/docs/claude-code/setup
+- **Claude Code SDK**: Follow the SDK setup at https://docs.anthropic.com/en/docs/claude-code/sdk
+- **Node.js**: Version 18 or higher
+- **npm**: Comes with Node.js
+
+Make sure Claude Code is working properly before proceeding. You can test by running `cc --version` in your terminal.
+
 ## Quick Start
 
 ```bash
