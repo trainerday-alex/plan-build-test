@@ -1,7 +1,7 @@
 {
-  "name": "three-part-flow-orchestrator",
+  "name": "plan-build-test",
   "version": "1.0.0",
-  "description": "A simple orchestrator for architect, coder, and tester agents",
+  "description": "An AI orchestrator that builds working software through a Plan-Build-Test cycle",
   "main": "orchestrator.js",
   "bin": {
     "orchestrator": "./orchestrator.js"
