@@ -59,26 +59,6 @@ Every command follows the same three-step cycle:
 
 After tests pass, the web server stays running so you can try it yourself.
 
-## Setup
-
-### 1. Install Dependencies
-```bash
-npm install
-```
-
-### 2. Configure Project Directory
-Copy the example environment file and update it with your preferred project location:
-```bash
-cp .env.example .env
-```
-
-Edit `.env` and set your project directory:
-```
-PROJECTS_DIR=/Users/alex/Documents/Projects/ai-projects
-```
-
-If not specified, projects will be created in `./projects/`
-
 ## Commands
 
 ### Create a New Project
