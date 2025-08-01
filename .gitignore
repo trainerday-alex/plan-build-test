@@ -41,3 +41,6 @@ orchestrator-results.json
 
 # Current project tracking
 .current-project
+
+# Basic Memory files
+.DO-NOT-USE.md
