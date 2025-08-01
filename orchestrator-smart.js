@@ -145,6 +145,45 @@ Provide:
 \`\`\`
 
 Reply with plain text only.`;
+  },
+  
+  refactorAnalyst: (req, allFiles) => {
+    const template = loadTemplate('refactor-analyst');
+    if (template) {
+      return template
+        .replace('${requirement}', req)
+        .replace('${allFiles}', allFiles || 'No files found');
+    }
+    // Fallback to inline template
+    return `As a refactor analyst, analyze the existing code for: "${req}"
+
+Current project files:
+${allFiles || 'No files found'}
+
+Do NOT use any tools. Provide:
+
+1) CODE QUALITY ASSESSMENT
+- What works well (keep these patterns)
+- What needs improvement (refactor these)
+- Any code smells or anti-patterns
+
+2) REFACTORING TASKS (numbered, in order)
+Each task should:
+- Target a specific improvement
+- Maintain existing functionality
+- Be independently testable
+
+Format:
+1. Refactor description (what and why)
+2. Refactor description (what and why)
+
+3) EXPECTED IMPROVEMENTS
+- Performance gains
+- Better maintainability
+- Cleaner architecture
+- Reduced complexity
+
+Reply with plain text only.`;
   }
 };
 
@@ -488,10 +527,15 @@ export async function runOrchestrator(projectName, requirement) {
         console.log('');
       }
       
-      // Check if we just need to run tests
-      if (reviewResult.toLowerCase().includes('run tests') || 
+      // Check if this is a refactor request
+      const isRefactor = requirement.toLowerCase().includes('refactor') || 
+                        requirement.toLowerCase().includes('improve existing code') ||
+                        requirement.toLowerCase().includes('clean up');
+      
+      // Check if we just need to run tests (but not if it's a refactor request)
+      if (!isRefactor && (reviewResult.toLowerCase().includes('run tests') || 
           reviewResult.toLowerCase().includes('everything') || 
-          state.status === 'completed') {
+          state.status === 'completed')) {
         console.log('✅ Project is complete. Running tests...\n');
         
         // Just run the tests
@@ -578,6 +622,44 @@ export async function runOrchestrator(projectName, requirement) {
         }
       }
       
+      // If this is a refactor request on an existing project, create new refactor tasks
+      if (isRefactor) {
+        console.log('♻️  Starting refactoring analysis...\n');
+        projectState.appendTextLog(`\nStarting refactoring analysis...`);
+        projectState.appendTaskLog('PLAN', `Refactor: ${requirement}`);
+        
+        // Get all existing files for refactor analysis
+        const allFiles = getAllProjectFiles(projectPath).join('\n');
+        const refactorResult = await callClaude(
+          PROMPTS.refactorAnalyst(requirement, allFiles), 
+          'Refactor Analyst', 
+          projectState
+        );
+        
+        // Parse new refactor tasks
+        state.tasks = parseTasks(refactorResult);
+        state.completedTasks = []; // Reset completed tasks for refactoring
+        state.lastTaskIndex = -1; // Start from beginning
+        state.status = 'in_progress';
+        
+        console.log(`📋 Found ${state.tasks.length} refactoring tasks\n`);
+        
+        projectState.appendTextLog(`\nRefactor Analyst created ${state.tasks.length} tasks:`);
+        state.tasks.forEach((task, i) => {
+          projectState.appendTextLog(`${i + 1}. ${task.description}`, false);
+          projectState.appendTextLog(`   Test: ${task.test}`, false);
+        });
+        
+        projectState.appendLog({
+          action: 'REFACTOR_ANALYSIS_COMPLETE',
+          details: `Created ${state.tasks.length} refactoring tasks`,
+          tasks: state.tasks
+        });
+        
+        // Save updated state
+        projectState.saveState(state);
+      }
+      
     } else {
       console.log('📄 New project. Creating from scratch...\n');
       
@@ -650,11 +732,28 @@ build/
         projectState.appendTextLog(`WARNING: Git init failed - ${gitError.message}`);
       }
       
-      // Get architect blueprint
-      console.log('🏗️  Architect designing solution...');
-      projectState.appendTextLog(`\nArchitect designing solution...`);
-      projectState.appendTaskLog('PLAN', `New project: ${requirement}`);
-      const architectResult = await callClaude(PROMPTS.architect(requirement), 'Architect', projectState);
+      // Get architect blueprint or refactor analysis
+      const isRefactor = requirement.toLowerCase().includes('refactor') || 
+                        requirement.toLowerCase().includes('improve existing code') ||
+                        requirement.toLowerCase().includes('clean up');
+      
+      let planResult;
+      if (isRefactor) {
+        console.log('♻️  Refactor Analyst analyzing code...');
+        projectState.appendTextLog(`\nRefactor Analyst analyzing existing code...`);
+        projectState.appendTaskLog('PLAN', `Refactor analysis: ${requirement}`);
+        
+        // Get all existing files for refactor analysis
+        const allFiles = getAllProjectFiles(projectPath).join('\n');
+        planResult = await callClaude(PROMPTS.refactorAnalyst(requirement, allFiles), 'Refactor Analyst', projectState);
+      } else {
+        console.log('🏗️  Architect designing solution...');
+        projectState.appendTextLog(`\nArchitect designing solution...`);
+        projectState.appendTaskLog('PLAN', `New project: ${requirement}`);
+        planResult = await callClaude(PROMPTS.architect(requirement), 'Architect', projectState);
+      }
+      
+      const architectResult = planResult;
       
       // Parse tasks
       state.tasks = parseTasks(architectResult);
