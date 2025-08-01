@@ -25,9 +25,11 @@ cd plan-build-test
 # 2. Install dependencies
 npm install
 
-# 3. Configure project directory
+# 3. Configure environment
 cp .env.example .env
-# Edit .env and update PROJECTS_DIR to your preferred location
+# Edit .env and update:
+# - PROJECTS_DIR: where AI-generated projects will be created
+# - AGENTS_PATH: where agent templates are stored (optional)
 
 # 4. Create your first project
 npm run new-project my-app "build a todo list with add and delete"

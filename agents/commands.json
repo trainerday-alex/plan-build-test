@@ -1,0 +1,22 @@
+{
+  "test_instructions": {
+    "task_format": "Task description (test: how to verify)",
+    "default_test": "verify manually",
+    "playwright_test": {
+      "description": "Create ONE test file that validates the main functionality",
+      "file_path": "test/e2e.test.js",
+      "focus": "Focus on the core requirement. Keep it simple."
+    }
+  },
+  "file_formats": {
+    "code_block": {
+      "format": "**path/to/file.js**\n```javascript\n// code here\n```",
+      "instruction": "Complete code in markdown blocks"
+    }
+  },
+  "response_rules": {
+    "no_tools": "Do NOT use any tools",
+    "plain_text": "Reply with plain text only",
+    "text_only": "TEXT-ONLY response"
+  }
+}

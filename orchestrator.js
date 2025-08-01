@@ -12,7 +12,8 @@ dotenv.config();
 const execAsync = promisify(exec);
 const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEMPLATES_DIR = join(__dirname, 'templates');
+const AGENTS_PATH = process.env.AGENTS_PATH || join(process.cwd(), 'agents');
+const TEMPLATES_DIR = AGENTS_PATH;
 
 // Load template from file
 function loadTemplate(templateName) {
