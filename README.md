@@ -23,7 +23,7 @@ npm run new-project my-app "build a todo list with add and delete"
 npm run task "add ability to edit todos"
 
 # 5. Fix issues or improve code
-npm run fix                   # Fix failing tests
+npm run fix                   # Fix failing tests (I work directly with Claude Code on this part)
 npm run refactor             # Improve code quality
 ```
 
