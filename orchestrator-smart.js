@@ -382,7 +382,7 @@ function parseTasks(architectResponse) {
   let inTaskSection = false;
   
   for (const line of lines) {
-    if (line.includes('TASK LIST')) {
+    if (line.includes('TASK LIST') || line.includes('REFACTORING TASKS')) {
       inTaskSection = true;
       continue;
     }
