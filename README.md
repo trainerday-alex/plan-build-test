@@ -9,20 +9,24 @@ Every action follows the same three steps with dedicated AI agents (Architect, C
 ## Quick Start
 
 ```bash
-# 1. Install dependencies
+# 1. Clone the repository
+git clone https://github.com/trainerday-alex/plan-build-test.git
+cd plan-build-test
+
+# 2. Install dependencies
 npm install
 
-# 2. Configure project directory
+# 3. Configure project directory
 cp .env.example .env
 # Edit .env and update PROJECTS_DIR to your preferred location
 
-# 3. Create your first project
+# 4. Create your first project
 npm run new-project my-app "build a todo list with add and delete"
 
-# 4. Add features (works on current project)
+# 5. Add features (works on current project)
 npm run task "add ability to edit todos"
 
-# 5. Fix issues or improve code
+# 6. Fix issues or improve code
 npm run fix                   # Fix failing tests (I work directly with Claude Code on this part)
 npm run refactor             # Improve code quality
 ```
