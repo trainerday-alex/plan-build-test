@@ -1,8 +1,8 @@
 # Plan-Build-Test Loop
 
-An AI orchestrator that builds working software through a simple, repeating cycle: **Plan/Review → Build → Test**
+An AI-powered orchestrator that creates and coordinates specialized agents using the Claude Code CLI/SDK to build working software. It implements a systematic development approach through autonomous agents that follow a simple, repeating cycle: **Plan/Review → Build → Test**
 
-Every action follows the same three steps, keeping development predictable and testable.
+Every action follows the same three steps with dedicated AI agents (Architect, Coder, Tester, Refactor Analyst) working together, keeping development predictable and testable.
 
 ## Quick Start
 
