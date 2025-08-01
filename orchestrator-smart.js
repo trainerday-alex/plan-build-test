@@ -526,10 +526,9 @@ export async function runOrchestrator(projectName, requirement) {
         }
       }
       
-      console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
-      
       // Skip review for refactor - go straight to refactor analysis
       if (isRefactor) {
+        // Don't show status for refactor since we're starting fresh
         console.log('♻️  Starting refactoring analysis...\n');
         projectState.appendTextLog(`\nStarting refactoring analysis...`);
         projectState.appendTaskLog('PLAN', `Refactor: ${requirement}`);
@@ -567,6 +566,9 @@ export async function runOrchestrator(projectName, requirement) {
         
         // Skip to task execution
       } else {
+        // Show status for non-refactor tasks
+        console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
+        
         // Get log summaries for regular review
         const logSummary = projectState.getLogSummary();
         let taskLogContent = '';
