@@ -1,8 +1,10 @@
 # Plan-Build-Test Loop
 
-An AI-powered orchestrator that creates and coordinates specialized agents using the Claude Code CLI/SDK to build working software. It implements a systematic development approach through autonomous agents that follow a simple, repeating cycle: **Plan/Review → Build → Test**
+An AI-powered orchestrator that creates and coordinates specialized agents using the Claude Code CLI/SDK to build working software. Following lean methodology principles, it focuses on delivering the most important features first through a systematic cycle: **Plan/Review → Build → Test**
 
-Every action follows the same three steps with dedicated AI agents (Architect, Coder, Tester, Refactor Analyst) working together, keeping development predictable and testable.
+This implementation is based on "The Three-Part Flow" philosophy - a business-first approach that prioritizes rapid validation of ideas through working demos. Instead of over-planning, the system builds testable software in 30-minute cycles, allowing you to validate assumptions with real working code before moving to the next priority.
+
+Every action follows the same three steps with dedicated AI agents (Architect, Coder, Tester, Refactor Analyst) working together, ensuring each cycle produces deployable, testable software that demonstrates concrete business value.
 
 ## Quick Start
 
@@ -121,6 +123,15 @@ npm run fix
 npm run refactor
 # (improves code structure while maintaining functionality)
 ```
+
+## Philosophy: Lean & Business-First
+
+Built on lean methodology principles:
+- **Most Important First** - Start with the highest priority feature that delivers real value
+- **Working Software Always** - Every cycle produces something you can actually test and use
+- **Validate Before Expanding** - Test your assumptions with real code before building more
+- **No Over-Planning** - Build, test, learn, then decide what's next based on results
+- **Concrete Over Abstract** - "Enter X, see Y" is clearer than lengthy specifications
 
 ## Why Plan-Build-Test?
 
