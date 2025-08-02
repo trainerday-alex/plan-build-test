@@ -376,7 +376,7 @@ async function callClaude(prompt, role, projectState = null) {
   try {
     writeFileSync(tmpFile, prompt);
     
-    const { stdout, stderr } = await execAsync(`cat "${tmpFile}" | cc -p 2>&1`, {
+    const { stdout, stderr } = await execAsync(`cat "${tmpFile}" | claude -p 2>&1`, {
       timeout: 30000, // 30 seconds should be enough for simple prompts
       maxBuffer: 10 * 1024 * 1024
     });
