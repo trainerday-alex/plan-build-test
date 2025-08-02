@@ -2,6 +2,8 @@
 
 An AI-powered orchestrator that creates and coordinates specialized agents using the Claude Code CLI/SDK to build working software. Following lean methodology principles, it focuses on delivering the most important features first through a systematic cycle: **Plan/Review → Build → Test**
 
+This is designed to work with pure JavaScript and Express.js server. Probably best for prototyping right now but just changing the agent prompts and adding a new setup template could work for any project. Just fork it and make your own or if you want to help on this and add support for other environments that's great as well.
+
 This implementation is based on "The Three-Part Flow" philosophy - a business-first approach that prioritizes rapid validation of ideas through working demos. Instead of over-planning, the system builds testable software in 30-minute cycles, allowing you to validate assumptions with real working code before moving to the next priority.
 
 Every action follows the same three steps with dedicated AI agents (Architect, Coder, Tester, Refactor Analyst) working together, ensuring each cycle produces deployable, testable software that demonstrates concrete business value.
