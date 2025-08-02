@@ -661,9 +661,9 @@ export async function runOrchestrator(projectName, requirement) {
         // Ask Claude to review and determine next steps
         let reviewResult = '';
         try {
-        projectState.appendTextLog(`\nReviewing existing project...`);
-        projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
-        reviewResult = await callClaude(
+          projectState.appendTextLog(`\nReviewing existing project...`);
+          projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
+          reviewResult = await callClaude(
           PROMPTS.reviewProject(projectName, logSummary, requirement, taskLogContent),
           'Project Reviewer',
           projectState
