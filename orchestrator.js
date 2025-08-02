@@ -439,10 +439,12 @@ export function ensureDir(filePath) {
   }
 }
 
-export async function callClaude(prompt, role, projectState = null) {
-  console.log(`  → Calling ${role}...`);
+export async function callClaude(prompt, role, projectState = null, retryCount = 0) {
+  const maxRetries = 2;
+  
+  console.log(`  → Calling ${role}...${retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''}`);
   if (projectState) {
-    projectState.appendTextLog(`Calling ${role}...`);
+    projectState.appendTextLog(`Calling ${role}...${retryCount > 0 ? ` (retry ${retryCount})` : ''}`);
     projectState.appendTextLog(`Prompt: ${prompt.substring(0, 500)}...`, false);
   }
   
@@ -474,14 +476,82 @@ export async function callClaude(prompt, role, projectState = null) {
   try {
     writeFileSync(tmpFile, prompt);
     
-    const { stdout, stderr } = await execAsync(`cat "${tmpFile}" | claude -p 2>&1`, {
-      timeout: 60000, // 60 seconds timeout
-      maxBuffer: 10 * 1024 * 1024
+    // Check if file was written successfully
+    if (!existsSync(tmpFile)) {
+      throw new Error('Failed to write prompt file');
+    }
+    
+    // Check file size
+    const fileStats = statSync(tmpFile);
+    console.log(`  → Prompt file size: ${(fileStats.size / 1024).toFixed(2)} KB`);
+    
+    // Skip the test command since Claude CLI is working normally
+    
+    // Read the file content first
+    const promptContent = readFileSync(tmpFile, 'utf8');
+    
+    // Try running claude with the content directly using spawn for better control
+    const { spawn } = await import('child_process');
+    
+    let stdout = '';
+    let stderr = '';
+    let timedOut = false;
+    
+    const claudeProcess = spawn('claude', ['-p'], {
+      stdio: ['pipe', 'pipe', 'pipe']
     });
+    
+    // Set timeout
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      claudeProcess.kill('SIGTERM');
+    }, 120000); // 120 seconds timeout (increased from 60)
+    
+    // Send the prompt content to stdin
+    claudeProcess.stdin.write(promptContent);
+    claudeProcess.stdin.end();
+    
+    // Collect output
+    claudeProcess.stdout.on('data', (data) => {
+      stdout += data.toString();
+    });
+    
+    claudeProcess.stderr.on('data', (data) => {
+      stderr += data.toString();
+    });
+    
+    // Wait for process to complete
+    await new Promise((resolve, reject) => {
+      claudeProcess.on('close', (code) => {
+        clearTimeout(timeout);
+        
+        if (timedOut) {
+          reject(new Error('Claude process timed out after 120 seconds'));
+        } else if (code !== 0) {
+          const error = new Error(`Claude process exited with code ${code}`);
+          error.code = code;
+          error.stdout = stdout;
+          error.stderr = stderr;
+          reject(error);
+        } else {
+          resolve();
+        }
+      });
+      
+      claudeProcess.on('error', (err) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+    
+    // Check for empty response
+    if (!stdout || stdout.trim().length === 0) {
+      console.error('  ❌ Empty response from Claude');
+      throw new Error('Empty response from Claude CLI');
+    }
     
     // Clean up temp file
     try { 
-      const { unlinkSync } = await import('fs');
       unlinkSync(tmpFile); 
     } catch {}
     
@@ -493,20 +563,49 @@ export async function callClaude(prompt, role, projectState = null) {
     return stdout.trim();
   } catch (error) {
     console.error(`  ❌ ${role} error:`, error.message);
+    
+    // More detailed error logging
+    if (error.code === 'ENOENT') {
+      console.error('  ❌ Command not found - is Claude CLI installed?');
+    } else if (error.message.includes('timed out')) {
+      console.error('  ❌ Request timed out after 120 seconds');
+    } else if (error.stderr || stderr) {
+      console.error('  ❌ Error output:', error.stderr || stderr);
+    }
+    
+    if (error.stdout || stdout) {
+      console.error('  ℹ️  Partial output received:', (error.stdout || stdout).substring(0, 200) + '...');
+    }
+    
     if (projectState) {
       projectState.appendTextLog(`ERROR: ${role} failed - ${error.message}`);
+      projectState.appendTextLog(`Error code: ${error.code || 'unknown'}`, false);
       projectState.appendTextLog(`Failed prompt saved to: ${tmpFile}`, false);
     }
     
     // Save failed prompt for debugging
-    if (process.env.DEBUG) {
-      console.error(`  Failed prompt saved to: ${tmpFile}`);
-    } else {
-      // Clean up temp file even on error
-      try { 
-        const { unlinkSync } = await import('fs');
-        unlinkSync(tmpFile); 
-      } catch {}
+    console.error(`  💾 Failed prompt saved to: ${tmpFile}`);
+    console.error(`  📋 To retry manually: cat "${tmpFile}" | claude -p`);
+    
+    // Show a preview of the prompt for debugging
+    try {
+      const promptPreview = promptContent.substring(0, 300).replace(/\n/g, '\n     ');
+      console.error(`  📄 Prompt preview (first 300 chars):`);
+      console.error(`     ${promptPreview}...`);
+    } catch (readError) {
+      console.error(`  ❌ Could not show prompt preview`);
+    }
+    
+    // Don't delete file on error for debugging
+    
+    // Retry on certain errors
+    if (retryCount < maxRetries && 
+        (error.message.includes('timed out') || 
+         error.message.includes('ECONNRESET') ||
+         error.message.includes('Empty response'))) {
+      console.log(`  🔄 Retrying in 5 seconds...`);
+      await new Promise(resolve => setTimeout(resolve, 5000));
+      return callClaude(prompt, role, projectState, retryCount + 1);
     }
     
     throw error;
@@ -885,6 +984,19 @@ async function executeAddTask(projectState, requirement, state) {
 async function executeFix(projectState, requirement, state) {
   console.log('\n🔧 Fixing issues in project...\n');
   
+  // First, check if we're in the middle of a backlog
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  let currentBacklog = null;
+  
+  if (existsSync(backlogsFile)) {
+    const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+    currentBacklog = backlogsData.backlogs.find(b => b.status === 'in_progress');
+    
+    if (currentBacklog) {
+      console.log(`📋 Working on backlog #${currentBacklog.id}: ${currentBacklog.title}`);
+    }
+  }
+  
   // Check if there's an incomplete task to resume
   const lastIncompleteTask = projectState.getLastIncompleteTask();
   if (lastIncompleteTask >= 0) {
@@ -895,25 +1007,62 @@ async function executeFix(projectState, requirement, state) {
     const log = projectState.getLog();
     const tasks = [];
     const taskNumbers = new Set();
+    const completedTaskNumbers = new Set();
     
-    // Reconstruct tasks from CREATE_TASK entries
+    // First, find the most recent ARCHITECT_COMPLETE to get the correct task set
+    let lastArchitectIndex = -1;
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i].action === 'ARCHITECT_COMPLETE') {
+        lastArchitectIndex = i;
+        break;
+      }
+    }
+    
+    // Collect completed task numbers
     log.forEach(entry => {
-      if (entry.action === 'CREATE_TASK' && !taskNumbers.has(entry.taskNumber)) {
-        tasks.push({
-          taskNumber: entry.taskNumber,
-          description: entry.description,
-          test: entry.testCommand || 'npm test'
-        });
-        taskNumbers.add(entry.taskNumber);
+      if (entry.action === 'COMPLETE_TASK') {
+        completedTaskNumbers.add(entry.taskNumber);
       }
     });
+    
+    // Reconstruct tasks from the last architect run
+    if (lastArchitectIndex >= 0 && log[lastArchitectIndex].tasks) {
+      // Use tasks from ARCHITECT_COMPLETE entry
+      log[lastArchitectIndex].tasks.forEach(task => {
+        tasks.push({
+          taskNumber: task.taskNumber,
+          description: task.description,
+          test: task.test || 'npm test',
+          status: completedTaskNumbers.has(task.taskNumber) ? 'completed' : 'pending'
+        });
+      });
+    } else {
+      // Fallback: reconstruct from CREATE_TASK entries after the last ARCHITECT_COMPLETE
+      log.forEach((entry, index) => {
+        if (index > lastArchitectIndex && entry.action === 'CREATE_TASK' && !taskNumbers.has(entry.taskNumber)) {
+          tasks.push({
+            taskNumber: entry.taskNumber,
+            description: entry.description,
+            test: entry.testCommand || 'npm test',
+            status: completedTaskNumbers.has(entry.taskNumber) ? 'completed' : 'pending'
+          });
+          taskNumbers.add(entry.taskNumber);
+        }
+      });
+    }
     
     // Sort tasks by task number
     tasks.sort((a, b) => a.taskNumber - b.taskNumber);
     state.tasks = tasks;
     
+    console.log(`📋 Found ${tasks.length} tasks from current backlog`);
+    const completedCount = tasks.filter(t => t.status === 'completed').length;
+    console.log(`✅ ${completedCount} completed, ${tasks.length - completedCount} remaining\n`);
+    
     // Resume coder tasks from where we left off
-    await runCoderTasks(projectState, requirement, state);
+    // Use the backlog description as the requirement if available
+    const actualRequirement = currentBacklog ? currentBacklog.description : requirement;
+    await runCoderTasks(projectState, actualRequirement, state);
     return;
   }
   
@@ -951,6 +1100,20 @@ async function executeFixTests(projectState, requirement, state) {
   let testOutput = '';
   
   // Always run tests to get current status
+  console.log('📦 Installing dependencies first...');
+  
+  // First run npm install to ensure all dependencies are available
+  try {
+    await execAsync('npm install', { 
+      cwd: projectState.projectPath,
+      timeout: 120000 
+    });
+    console.log('  ✓ Dependencies installed\n');
+  } catch (error) {
+    console.error('  ❌ Failed to install dependencies:', error.message);
+    console.error('  ⚠️  Continuing anyway to see test errors...\n');
+  }
+  
   console.log('📋 Running tests...');
   
   // Run the tests
@@ -1613,18 +1776,18 @@ async function runTests(projectState, projectPath, requirement, state) {
     await ensureTestSetup(projectPath, projectState);
   }
   
-  // Install dependencies if needed
-  if (!existsSync(join(projectPath, 'node_modules'))) {
-    console.log('\n📦 Installing dependencies...');
-    try {
-      await execAsync('npm install', { 
-        cwd: projectPath,
-        timeout: 120000 
-      });
-      console.log('  ✓ Dependencies installed');
-    } catch (error) {
-      console.log('  ⚠️  Failed to install dependencies');
-    }
+  // Always install dependencies to ensure any new packages are installed
+  console.log('\n📦 Installing dependencies...');
+  try {
+    await execAsync('npm install', { 
+      cwd: projectPath,
+      timeout: 120000 
+    });
+    console.log('  ✓ Dependencies installed');
+  } catch (error) {
+    console.error('  ❌ Failed to install dependencies:', error.message);
+    // Don't continue if npm install fails - tests will fail anyway
+    throw new Error('Failed to install dependencies');
   }
   
   // Run tests
