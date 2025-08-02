@@ -31,7 +31,6 @@ npm install
 cp .env.example .env
 # Edit .env and update:
 # - PROJECTS_DIR: where AI-generated projects will be created
-# - AGENTS_PATH: where agent templates are stored (optional)
 
 # 4. Create your first project
 npm run create-project my-app "build a todo list with add and delete"
@@ -153,21 +152,6 @@ By enforcing this pattern, the AI:
 
 The human stays in control, deciding what happens next after each cycle.
 
-## OPTIONAL: Agent Templates with Basic Memory
-
-You can store and manage agent templates using the [Basic Memory MCP plugin](https://github.com/BasicMCP/basic-memory), which enables:
-
-- **Edit from Claude Desktop**: Improve agent prompts directly from Claude or any MCP-supporting LLM
-- **Review in Obsidian**: View and organize your agent templates as part of an Obsidian project
-- **Version Control**: Track changes to your agent strategies over time
-- **Collaborate**: Share agent improvements across team members
-
-To use Basic Memory for agent templates:
-1. Install and configure Basic Memory MCP plugin
-2. Set `AGENTS_PATH` in your `.env` to point to your Basic Memory project location
-3. Agent templates will be automatically loaded from there (with YAML frontmatter stripped)
-
-Default agent templates are included in `./agents/` if you prefer local-only usage.
 
 ## Troubleshooting
 
