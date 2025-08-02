@@ -371,13 +371,13 @@ async function callClaude(prompt, role, projectState = null) {
     projectState.appendTextLog(`Prompt: ${prompt.substring(0, 500)}...`, false);
   }
   
-  const tmpFile = `/tmp/claude-prompt-${Date.now()}.txt`;
+  const tmpFile = join(process.cwd(), `.claude-prompt-${Date.now()}.txt`);
   
   try {
     writeFileSync(tmpFile, prompt);
     
     const { stdout, stderr } = await execAsync(`cat "${tmpFile}" | claude -p 2>&1`, {
-      timeout: 30000, // 30 seconds should be enough for simple prompts
+      timeout: 60000, // 60 seconds timeout
       maxBuffer: 10 * 1024 * 1024
     });
     
