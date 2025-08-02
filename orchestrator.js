@@ -252,6 +252,35 @@ class ProjectState {
     return fullState.requirements?.[requirement] || null;
   }
   
+  // Get the most recent project state across all requirements
+  getMostRecentState() {
+    const fullState = this.loadState();
+    if (!fullState) return null;
+    
+    // Old format
+    if (fullState.tasks && !fullState.requirements) {
+      return fullState;
+    }
+    
+    // New format: find the most recently updated requirement
+    let mostRecent = null;
+    let latestTime = 0;
+    
+    for (const [req, state] of Object.entries(fullState.requirements || {})) {
+      // Prefer completed states or those with most progress
+      const progress = state.completedTasks?.length || 0;
+      const total = state.tasks?.length || 0;
+      const score = progress * 1000 + total; // Prioritize progress
+      
+      if (score > latestTime) {
+        latestTime = score;
+        mostRecent = state;
+      }
+    }
+    
+    return mostRecent;
+  }
+  
   // Save state for a specific requirement
   saveRequirementState(requirement, requirementState) {
     let fullState = this.loadState() || {};
@@ -610,11 +639,23 @@ export async function runOrchestrator(projectName, requirement) {
         if (existingRequirementState) {
           console.log(`📋 Found existing tasks for: "${requirement}"`);
           state = { ...state, ...existingRequirementState };
+        } else if (requirement.includes('Fix failing tests')) {
+          // For fix command, load the most recent state
+          const recentState = projectState.getMostRecentState();
+          if (recentState) {
+            console.log(`📋 Fix command: loading most recent project state`);
+            state = { ...state, ...recentState };
+          } else {
+            console.log(`📋 New requirement: "${requirement}" - starting fresh`);
+          }
         } else {
           console.log(`📋 New requirement: "${requirement}" - starting fresh`);
           // state stays as initialized above (empty)
         }
       }
+      
+      // Declare reviewResult at the right scope
+      let reviewResult = '';
       
       // Skip review for refactor - go straight to refactor analysis
       if (isRefactor) {
@@ -696,7 +737,6 @@ export async function runOrchestrator(projectName, requirement) {
         } catch {}
         
         // Ask Claude to review and determine next steps
-        let reviewResult = '';
         try {
           projectState.appendTextLog(`\nReviewing existing project...`);
           projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
