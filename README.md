@@ -88,7 +88,8 @@ npm run backlog <description> # Add a new backlog item
 
 ### Work on Current Project
 ```bash
-npm run fix                   # Fix failing tests
+npm run fix                   # Fix failing tests (resumes from failed tasks)
+npm run fix-tests            # Update tests to match implementation
 npm run refactor             # Improve code quality
 npm run status               # Show project progress
 npm run task <description>    # Legacy: Add feature directly (use backlogs instead)
@@ -174,10 +175,20 @@ By enforcing this pattern, the AI:
 The human stays in control, deciding what happens next after each cycle.
 
 
+## Recent Improvements
+
+- **Better Task Resumption**: The `fix` command now properly resumes from failed tasks within the correct backlog context
+- **Automatic Dependency Installation**: Dependencies are automatically installed before running tests
+- **Improved Error Handling**: Better diagnostics for Claude CLI failures with retry logic
+- **Test Simplification**: Tests now focus on 2-3 core functionality tests instead of edge cases
+- **Fix-Tests Command**: New command to update tests when implementation changes
+
 ## Troubleshooting
 
-- **Claude timeouts**: The orchestrator will use local analysis as fallback
-- **Test failures**: Run `npm run fix` to diagnose and repair
+- **Claude timeouts**: The orchestrator will retry with increased timeout (120s) and better error messages
+- **Test failures**: Run `npm run fix` to diagnose and repair (properly resumes from failed task)
+- **Missing dependencies**: Now automatically runs `npm install` before tests
+- **Too many tests**: Use `npm run fix-tests` to simplify tests to core functionality
 - **Need to see details**: Check `log.txt` and `task-log.txt` in your project
 
 ## License
