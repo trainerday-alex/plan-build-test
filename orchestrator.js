@@ -157,7 +157,7 @@ Focus on the core requirement. Keep it simple.
 Do NOT use any tools. TEXT-ONLY response.
 
 Provide:
-**test/e2e.test.js**
+**plan-build-test/test/e2e.test.js**
 \`\`\`javascript
 // your test code here
 \`\`\`
@@ -209,11 +209,17 @@ Reply with plain text only.`;
 class ProjectState {
   constructor(projectPath) {
     this.projectPath = projectPath;
-    this.logFile = join(projectPath, 'logs.json');
-    this.stateFile = join(projectPath, 'orchestrator-state.json');
-    this.textLogFile = join(projectPath, 'log.txt');
-    this.taskLogFile = join(projectPath, 'task-log.txt');
+    this.planBuildTestDir = join(projectPath, 'plan-build-test');
+    this.logFile = join(this.planBuildTestDir, 'logs.json');
+    this.stateFile = join(this.planBuildTestDir, 'orchestrator-state.json');
+    this.textLogFile = join(this.planBuildTestDir, 'log.txt');
+    this.taskLogFile = join(this.planBuildTestDir, 'task-log.txt');
     this.currentTaskNumber = 0;
+    
+    // Ensure plan-build-test directory exists
+    if (!existsSync(this.planBuildTestDir)) {
+      mkdirSync(this.planBuildTestDir, { recursive: true });
+    }
   }
 
   exists() {
@@ -887,11 +893,14 @@ playwright/.cache/
 .DS_Store
 Thumbs.db
 
+# Plan-Build-Test orchestration files
+plan-build-test/logs.json
+plan-build-test/orchestrator-state.json
+plan-build-test/log.txt
+plan-build-test/task-log.txt
+
 # Logs
 *.log
-log.txt
-logs.json
-task-log.txt
 
 # Build outputs
 dist/
@@ -1069,7 +1078,7 @@ build/
           projectState.appendTextLog(`Warning: No test files parsed from Claude response, using default test template`);
           // Create a default test if Claude didn't return proper format
           testFiles = [{
-            path: 'test/e2e.test.js',
+            path: 'plan-build-test/test/e2e.test.js',
             content: `import { test, expect } from '@playwright/test';
 
 test.describe('${projectName} Tests', () => {
@@ -1108,7 +1117,7 @@ test.describe('${projectName} Tests', () => {
           projectState.appendTextLog(`Warning: Failed to create test via Claude after ${maxRetries + 1} attempts, using default template`);
           // Create a basic default test
           testFiles = [{
-            path: 'test/e2e.test.js',
+            path: 'plan-build-test/test/e2e.test.js',
             content: `import { test, expect } from '@playwright/test';
 
 test.describe('${projectName} Tests', () => {

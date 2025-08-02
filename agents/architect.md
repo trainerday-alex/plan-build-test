@@ -30,7 +30,7 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
   ],
   "final_validation": {
     "description": "What the final test validates",
-    "test_file": "test/e2e.test.js",
+    "test_file": "plan-build-test/test/e2e.test.js",
     "key_assertions": [
       "What should work",
       "Error cases to check"

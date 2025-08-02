@@ -11,7 +11,7 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
 {
   "status": "SUCCESS",
   "test_file": {
-    "path": "test/e2e.test.js",
+    "path": "plan-build-test/test/e2e.test.js",
     "language": "javascript",
     "content": "// Complete Playwright test code here\n// Must include error cases",
     "test_cases": [
