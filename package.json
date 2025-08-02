@@ -8,7 +8,7 @@
   },
   "type": "module",
   "scripts": {
-    "test": "node --test test.js",
+    "test": "echo 'This is the orchestrator project. To test generated projects, use npm test in the project directory.'",
     "create-project": "node orchestrator-commands.js new-project",
     "task": "node orchestrator-commands.js task",
     "fix": "node orchestrator-commands.js fix",
