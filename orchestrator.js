@@ -1339,12 +1339,12 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Serve static files from src directory
-app.use(express.static(path.join(__dirname, 'src')));
+// Serve static files from plan-build-test/public directory
+app.use(express.static(path.join(__dirname, 'plan-build-test', 'public')));
 
 // Default route
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'src', 'index.html'));
+  res.sendFile(path.join(__dirname, 'plan-build-test', 'public', 'index.html'));
 });
 
 app.listen(PORT, () => {
