@@ -817,11 +817,23 @@ export async function runOrchestrator(projectName, requirement) {
       if (!isRefactor && (reviewResult.toLowerCase().includes('run tests') || 
           reviewResult.toLowerCase().includes('everything') || 
           state.status === 'completed')) {
-        console.log('✅ Project is complete. Running tests...\n');
+        console.log('✅ Project is complete. Running tests...');
+        
+        // Show what tests will be run
+        if (state.tasks.length > 0) {
+          console.log('\n📋 Tests to verify:');
+          state.tasks.forEach((task, i) => {
+            console.log(`   ${i + 1}. ${task.description}`);
+            if (task.test) {
+              console.log(`      Test: ${task.test}`);
+            }
+          });
+          console.log('');
+        }
         
         // Just run the tests
         const testCommand = 'npm test';
-        console.log(`Running: ${testCommand}`);
+        console.log(`🧪 Running: ${testCommand}`);
         
         try {
           const { stdout, stderr } = await execAsync(testCommand, {
@@ -1097,6 +1109,12 @@ build/
     
     // Create final test with retry logic
     console.log('\n🧪 Creating final validation test...');
+    console.log('📋 Test will verify:');
+    state.tasks.forEach((task, i) => {
+      console.log(`   ${i + 1}. ${task.description}`);
+    });
+    console.log('');
+    
     let finalTestResult = null;
     let testFiles = [];
     let retryCount = 0;
@@ -1238,6 +1256,17 @@ test.describe('${projectName} Tests', () => {
       ensureDir(filePath);
       writeFileSync(filePath, file.content);
       console.log(`  ✓ Created: ${file.path}`);
+      
+      // Extract test names from the test file
+      const testMatches = file.content.match(/test\(['"]([^'"]+)['"]/g);
+      if (testMatches && testMatches.length > 0) {
+        console.log('     Tests included:');
+        testMatches.forEach(match => {
+          const testName = match.match(/test\(['"]([^'"]+)['"]/)[1];
+          console.log(`       • ${testName}`);
+        });
+      }
+      
       projectState.appendTextLog(`  Created: ${file.path}`);
     }
     
