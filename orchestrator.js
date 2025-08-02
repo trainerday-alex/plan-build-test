@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, appendFileSync, statSync, unlinkSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, appendFileSync, statSync, unlinkSync, rmSync, cpSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join, dirname } from 'path';
@@ -12,11 +12,12 @@ dotenv.config();
 const execAsync = promisify(exec);
 const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEMPLATES_DIR = join(process.cwd(), 'agents');
+const TEMPLATES_DIR = join(process.cwd(), 'templates');
+const AGENTS_DIR = join(process.cwd(), 'agents');
 
-// Load template from file
+// Utility functions
 export function loadTemplate(templateName) {
-  const templatePath = join(TEMPLATES_DIR, `${templateName}.md`);
+  const templatePath = join(AGENTS_DIR, `${templateName}.md`);
   try {
     let content = readFileSync(templatePath, 'utf8');
     
@@ -41,7 +42,6 @@ export function loadTemplate(templateName) {
     return null;
   }
 }
-
 
 // Enhanced prompts for task-based approach
 export const PROMPTS = {
@@ -140,10 +140,24 @@ Open index.html in browser and verify form displays
 Reply with plain text only.`;
   },
   
-  finalTest: (req, projectPath) => {
+  finalTest: (req, projectPath, architectPlan = null, implementationFiles = null) => {
     const template = loadTemplate('tester');
     if (template) {
-      return template.replace('${requirement}', req);
+      let prompt = template.replace('${requirement}', req);
+      
+      // Add architect's test strategy if available
+      if (architectPlan && architectPlan.final_validation) {
+        const testStrategy = `\n\nArchitect's Test Strategy:\n${JSON.stringify(architectPlan.final_validation, null, 2)}`;
+        prompt = prompt.replace('Create ONE test file', `Create ONE test file based on the architect's strategy.${testStrategy}\n\nCreate ONE test file`);
+      }
+      
+      // Add implementation files so Tester can see what was actually built
+      if (implementationFiles) {
+        const implSection = `\n\nActual Implementation Files:\n${implementationFiles}\n\nIMPORTANT: Write tests that match the ACTUAL implementation above, not just the requirements.`;
+        prompt = prompt.replace('Do NOT use any tools.', implSection + '\n\nDo NOT use any tools.');
+      }
+      
+      return prompt;
     }
     // Fallback to inline template
     return `Create a simple Playwright test for: "${req}"
@@ -382,6 +396,33 @@ export class ProjectState {
       writeFileSync(this.taskLogFile, logEntry);
     }
   }
+  
+  // Get the last incomplete task index from logs
+  getLastIncompleteTask() {
+    const log = this.getLog();
+    let lastFailedIndex = -1;
+    
+    // Find the last TASK_FAILED entry
+    for (let i = log.length - 1; i >= 0; i--) {
+      if (log[i].action === 'TASK_FAILED') {
+        lastFailedIndex = log[i].taskIndex - 1; // Convert to 0-based index
+        break;
+      }
+    }
+    
+    return lastFailedIndex;
+  }
+  
+  // Set the last incomplete task
+  setLastIncompleteTask(taskIndex) {
+    // This is already logged via appendLog with TASK_FAILED action
+    // No additional storage needed
+  }
+  
+  // Clear the last incomplete task
+  clearLastIncompleteTask() {
+    // No action needed - completion is tracked via COMPLETE_TASK logs
+  }
 }
 
 // Create directory if it doesn't exist
@@ -597,7 +638,7 @@ export function getAllProjectFiles(projectPath) {
     
     const entries = readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.isDirectory() && !['node_modules', '.git'].includes(entry.name)) {
+      if (entry.isDirectory() && !['node_modules', '.git', 'plan-build-test'].includes(entry.name)) {
         scanDir(join(dir, entry.name), join(prefix, entry.name));
       } else if (entry.isFile() && !entry.name.startsWith('.')) {
         files.push(join(prefix, entry.name));
@@ -609,15 +650,27 @@ export function getAllProjectFiles(projectPath) {
   return files;
 }
 
-// Clean up old temporary files
+// Get all project files with their contents
+export function getAllProjectFilesWithContent(projectPath) {
+  const files = getAllProjectFiles(projectPath);
+  const filesWithContent = [];
+  
+  for (const file of files) {
+    try {
+      const fullPath = join(projectPath, file);
+      const content = readFileSync(fullPath, 'utf8');
+      filesWithContent.push(`\n=== File: ${file} ===\n${content}`);
+    } catch (err) {
+      // Skip files that can't be read
+    }
+  }
+  
+  return filesWithContent;
+}
+
 export function cleanupTempFiles() {
   const tmpDir = join(process.cwd(), '.tmp');
-  
-  // Ensure .tmp directory exists
-  if (!existsSync(tmpDir)) {
-    mkdirSync(tmpDir, { recursive: true });
-    return;
-  }
+  if (!existsSync(tmpDir)) return;
   
   try {
     const files = readdirSync(tmpDir);
@@ -625,12 +678,11 @@ export function cleanupTempFiles() {
     
     files.forEach(file => {
       if (file.startsWith('.claude-prompt-') && file.endsWith('.txt')) {
-        const filePath = join(tmpDir, file);
         try {
-          unlinkSync(filePath);
+          unlinkSync(join(tmpDir, file));
           cleaned++;
         } catch (e) {
-          // Ignore individual file errors
+          // Ignore cleanup errors
         }
       }
     });
@@ -643,10 +695,12 @@ export function cleanupTempFiles() {
   }
 }
 
-export async function runOrchestrator(projectName, requirement, commandType = 'create-project') {
+/**
+ * Main orchestrator function with command-based flow
+ */
+export async function runOrchestratorNew(projectName, requirement, commandType = 'create-project') {
   if (!projectName || !requirement) {
     console.error('❌ Error: Both project name and requirement are required');
-    console.error('Usage: node orchestrator.js "<project-name>" "<requirement>"');
     process.exit(1);
   }
 
@@ -658,12 +712,21 @@ export async function runOrchestrator(projectName, requirement, commandType = 'c
   
   console.log(`\n🚀 Project: ${projectName}`);
   console.log(`📋 Requirement: ${requirement}`);
+  console.log(`🎯 Command: ${commandType}`);
   console.log(`📁 Location: ${projectPath}`);
+  
+  // For create-project, delete existing folder if it exists
+  if (commandType === 'create-project' && existsSync(projectPath)) {
+    console.log('🗑️  Removing existing project folder...');
+    rmSync(projectPath, { recursive: true, force: true });
+    console.log('  ✓ Existing project removed\n');
+  }
   
   // Initialize logging
   if (!existsSync(projectPath)) {
     mkdirSync(projectPath, { recursive: true });
   }
+  
   projectState.appendTextLog(`\n${'='.repeat(80)}`);
   projectState.appendTextLog(`ORCHESTRATOR SESSION STARTED`);
   projectState.appendTextLog(`Project: ${projectName}`);
@@ -671,486 +734,672 @@ export async function runOrchestrator(projectName, requirement, commandType = 'c
   projectState.appendTextLog(`Command: ${commandType}`);
   projectState.appendTextLog(`Location: ${projectPath}`);
   projectState.appendTextLog(`${'='.repeat(80)}\n`);
-  
-  // Check if this is a refactor request
-  const isRefactor = requirement.toLowerCase().includes('refactor') || 
-                    requirement.toLowerCase().includes('improve existing code') ||
-                    requirement.toLowerCase().includes('clean up');
-
-  let state = {
-    tasks: [],
-    completedTasks: [],
-    status: 'started',
-    lastTaskIndex: -1
-  };
 
   try {
-    // Check if project exists
-    if (projectState.exists()) {
-      console.log('📂 Existing project found. Reviewing current state...\n');
-      
-      // For refactor, always start fresh
-      if (isRefactor) {
-        console.log('♻️  Refactor requested - starting fresh task list\n');
-        // state stays as initialized above (empty)
-      } else {
-        // Load existing tasks from logs for this requirement
-        const existingTasks = projectState.getRequirementTasks(requirement);
+    let state = {
+      tasks: [],
+      completedTasks: [],
+      status: 'started'
+    };
+
+    // Execute based on command type
+    switch (commandType) {
+      case 'create-project':
+        await executeCreateProject(projectState, requirement, state);
+        break;
         
-        if (existingTasks.length > 0) {
-          console.log(`📋 Found ${existingTasks.length} existing tasks for: "${requirement}"`);
-          state.tasks = existingTasks;
-          state.completedTasks = existingTasks.filter(t => t.status === 'completed');
-          state.lastTaskIndex = existingTasks.length - 1;
-        } else {
-          console.log(`📋 New requirement: "${requirement}" - starting fresh`);
-          // state stays as initialized above (empty)
-        }
-      }
-      
-      // Declare reviewResult at the right scope
-      let reviewResult = '';
-      
-      // Skip review for refactor - go straight to refactor analysis
-      if (isRefactor) {
-        // Don't show status for refactor since we're starting fresh
-        console.log('♻️  Starting refactoring analysis...\n');
-        projectState.appendTextLog(`\nStarting refactoring analysis...`);
-        projectState.appendTaskLog('PLAN', `Refactor: ${requirement}`);
+      case 'task':
+        await executeAddTask(projectState, requirement, state);
+        break;
         
-        // Get all existing files for refactor analysis
-        const allFiles = getAllProjectFiles(projectPath).join('\n');
-        const refactorResult = await callClaude(
-          PROMPTS.refactorAnalyst(requirement, allFiles), 
-          'Refactor Analyst', 
-          projectState
-        );
+      case 'fix':
+        await executeFix(projectState, requirement, state);
+        break;
         
-        // Parse new refactor tasks with JSON support
-        const refactorJson = parseAgentResponse(refactorResult, 'Refactor Analyst');
-        if (refactorJson && refactorJson.refactor_tasks) {
-          state.tasks = refactorJson.refactor_tasks.map(task => ({
-            description: task.description,
-            test: task.test_command || 'npm test'
-          }));
-          console.log('📋 Refactor Analysis:');
-          console.log(`  Strengths: ${refactorJson.assessment.strengths.length} identified`);
-          console.log(`  Improvements: ${refactorJson.assessment.weaknesses.length} needed`);
-          console.log(`  Tasks: ${state.tasks.length} refactoring tasks`);
-          console.log('');
-        } else {
-          // Fallback to text parsing
-          state.tasks = parseTasks(refactorResult);
-        }
-        state.completedTasks = []; // Reset completed tasks for refactoring
-        state.lastTaskIndex = -1; // Start from beginning
-        state.status = 'in_progress';
+      case 'refactor':
+        await executeRefactor(projectState, requirement, state);
+        break;
         
-        projectState.appendTextLog(`\nRefactor Analyst created ${state.tasks.length} tasks:`);
-        state.tasks.forEach((task, i) => {
-          projectState.appendTextLog(`${i + 1}. ${task.description}`, false);
-          projectState.appendTextLog(`   Test: ${task.test}`, false);
+      case 'fix-tests':
+        await executeFixTests(projectState, requirement, state);
+        break;
+        
+      default:
+        console.error(`❌ Unknown command type: ${commandType}`);
+        process.exit(1);
+    }
+    
+    // Finish with testing unless we're analyzing test fixes
+    if (commandType !== 'fix-tests') {
+      await runTests(projectState, projectPath, requirement, state);
+    }
+    
+  } catch (error) {
+    console.error('❌ Orchestrator error:', error.message);
+    projectState.appendTextLog(`ERROR: ${error.message}`);
+    process.exit(1);
+  }
+}
+
+/**
+ * Execute create-project command flow
+ */
+async function executeCreateProject(projectState, requirement, state) {
+  console.log('\n📝 Starting new project...\n');
+  
+  // Copy template files
+  await copyTemplateFiles(projectState);
+  
+  // Initialize git
+  await initializeGit(projectState);
+  
+  // Run Architect
+  await runArchitect(projectState, requirement, state);
+  
+  // Run Coder for each task
+  await runCoderTasks(projectState, requirement, state);
+}
+
+/**
+ * Copy files from express-app template
+ */
+async function copyTemplateFiles(projectState) {
+  console.log('📁 Setting up project template...');
+  
+  const templatePath = join(TEMPLATES_DIR, 'express-app');
+  const projectPath = projectState.projectPath;
+  
+  if (!existsSync(templatePath)) {
+    console.log('  ⚠️  Template not found, skipping template copy');
+    return;
+  }
+  
+  try {
+    // Copy all template files to project directory
+    cpSync(templatePath, projectPath, { recursive: true });
+    console.log('  ✓ Copied Express app template');
+    
+    // Update package.json with project name
+    const packagePath = join(projectPath, 'package.json');
+    if (existsSync(packagePath)) {
+      const packageContent = JSON.parse(readFileSync(packagePath, 'utf8'));
+      packageContent.name = projectPath.split('/').pop();
+      writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
+      console.log('  ✓ Updated package.json with project name');
+    }
+    
+    projectState.appendLog({
+      action: 'TEMPLATE_COPIED',
+      details: 'Express app template files copied successfully'
+    });
+    
+  } catch (error) {
+    console.log(`  ⚠️  Template copy failed: ${error.message}`);
+    projectState.appendTextLog(`WARNING: Template copy failed - ${error.message}`);
+  }
+}
+
+/**
+ * Execute task command flow
+ */
+async function executeAddTask(projectState, requirement, state) {
+  console.log('\n📝 Adding new task to existing project...\n');
+  
+  // Run Architect for new task
+  await runArchitect(projectState, requirement, state);
+  
+  // Run Coder for each task
+  await runCoderTasks(projectState, requirement, state);
+}
+
+/**
+ * Execute fix command flow
+ */
+async function executeFix(projectState, requirement, state) {
+  console.log('\n🔧 Fixing issues in project...\n');
+  
+  // Check if there's an incomplete task to resume
+  const lastIncompleteTask = projectState.getLastIncompleteTask();
+  if (lastIncompleteTask >= 0) {
+    console.log(`📝 Found incomplete task at index ${lastIncompleteTask + 1}`);
+    console.log('🔄 Resuming task execution...\n');
+    
+    // Load existing tasks from the last architect run
+    const log = projectState.getLog();
+    const tasks = [];
+    const taskNumbers = new Set();
+    
+    // Reconstruct tasks from CREATE_TASK entries
+    log.forEach(entry => {
+      if (entry.action === 'CREATE_TASK' && !taskNumbers.has(entry.taskNumber)) {
+        tasks.push({
+          taskNumber: entry.taskNumber,
+          description: entry.description,
+          test: entry.testCommand || 'npm test'
         });
-        
-        projectState.appendLog({
-          action: 'REFACTOR_ANALYSIS_COMPLETE',
-          details: `Created ${state.tasks.length} refactoring tasks`,
-          tasks: state.tasks
-        });
-        
-        // Log each refactor task creation with task numbers
-        state.tasks.forEach((task, i) => {
-          const taskNum = projectState.getNextTaskNumber();
-          task.taskNumber = taskNum; // Store task number for later reference
-          projectState.appendLog({
-            action: 'CREATE_TASK',
-            taskNumber: taskNum,
-            taskIndex: i + 1,
-            totalTasks: state.tasks.length,
-            description: task.description,
-            testCommand: task.test,
-            taskType: 'refactor'
-          });
-        });
-        
-        // Save updated state
-        // State is now tracked in logs, no need to save separately
-        
-        // Skip to task execution
-      } else {
-        // Show status for non-refactor tasks
-        if (state.tasks.length > 0) {
-          console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
-          if (state.completedTasks.length > 0) {
-            console.log('✅ Completed tasks:');
-            state.completedTasks.forEach((task, i) => {
-              console.log(`   ${i + 1}. ${task}`);
-            });
-          }
-        } else {
-          console.log(`📊 Current Status: No tasks found yet`);
-        }
-        
-        // Only run Project Reviewer if there are existing tasks
-        if (state.tasks.length > 0) {
-          // Get log summaries for regular review
-          const logSummary = projectState.getLogSummary();
-          let taskLogContent = '';
-          try {
-            if (existsSync(projectState.taskLogFile)) {
-              taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
-            }
-          } catch {}
-          
-          // Ask Claude to review and determine next steps
-          try {
-            projectState.appendTextLog(`\nReviewing existing project...`);
-            projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
-            reviewResult = await callClaude(
-            PROMPTS.reviewProject(projectName, logSummary, requirement, taskLogContent),
-            'Project Reviewer',
-            projectState
-          );
-        
-        // Parse review JSON if available
-        const reviewJson = parseAgentResponse(reviewResult, 'Project Reviewer');
-        if (reviewJson && reviewJson.recommendation) {
-          // Update reviewResult to use the recommendation for downstream logic
-          reviewResult = reviewJson.recommendation.description || reviewResult;
-          console.log('📊 Project Review:');
-          console.log(`  Status: ${reviewJson.project_state.current_status}`);
-          console.log(`  Completed: ${reviewJson.completed_tasks.length} tasks`);
-          console.log(`  Recommendation: ${reviewJson.recommendation.next_action} - ${reviewJson.recommendation.description}`);
-          console.log('');
-        } else {
-          console.log('📊 Project Review:');
-          console.log(reviewResult);
-          console.log('');
-        }
-        
-        projectState.appendLog({
-          action: 'PROJECT_REVIEWED',
-          details: 'Reviewed existing project state'
-        });
-      } catch (reviewError) {
-        console.log('⚠️  Claude review failed, analyzing state locally...');
-        projectState.appendTextLog(`WARNING: Claude review failed - ${reviewError.message}`);
-        
-        // Fallback: analyze state ourselves
-        if (state.status === 'completed' || 
-            (state.completedTasks.length === state.tasks.length && state.tasks.length > 0)) {
-          reviewResult = 'Everything appears complete. Run tests to verify.';
-          console.log(`📊 Local Analysis: Project appears complete (${state.completedTasks.length}/${state.tasks.length} tasks done)`);
-          console.log('✅ All tasks completed:');
-          state.completedTasks.forEach((task, i) => {
-            console.log(`   ${i + 1}. ✓ ${task}`);
-          });
-        } else if (state.tasks.length > 0) {
-          const remaining = state.tasks.length - state.completedTasks.length;
-          reviewResult = `${remaining} tasks remaining to complete.`;
-          console.log(`📊 Local Analysis: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
-          console.log('✅ Completed tasks:');
-          state.completedTasks.forEach((task, i) => {
-            console.log(`   ${i + 1}. ✓ ${task}`);
-          });
-          console.log(`\n⏳ Remaining tasks (${remaining}):`);
-          state.tasks.slice(state.completedTasks.length).forEach((task, i) => {
-            console.log(`   ${state.completedTasks.length + i + 1}. ${task.description}`);
-          });
-        } else {
-          reviewResult = 'Need to start from beginning with architect.';
-          console.log('📊 Local Analysis: No tasks found, need architect');
-        }
-        console.log('');
+        taskNumbers.add(entry.taskNumber);
       }
-      } else {
-        // No existing tasks - need to go to Architect
-        reviewResult = 'Need to start from beginning with architect.';
-        console.log('📊 No existing tasks - will start with Architect');
-      }
-      } // Close the else block for non-refactor review
-      
-      // Check if we just need to run tests (but not if it's a refactor request)
-      if (!isRefactor && reviewResult && (reviewResult.toLowerCase().includes('run tests') || 
-          reviewResult.toLowerCase().includes('everything') || 
-          state.status === 'completed')) {
-        console.log('✅ Project is complete. Running tests...');
-        
-        // Show what tests will be run
-        if (state.tasks.length > 0) {
-          console.log('\n📋 Tests to verify:');
-          state.tasks.forEach((task, i) => {
-            console.log(`   ${i + 1}. ${task.description}`);
-            if (task.test) {
-              console.log(`      Test: ${task.test}`);
-            }
-          });
-          console.log('');
-        }
-        
-        // Just run the tests
-        const testCommand = 'npm test';
-        console.log(`🧪 Running: ${testCommand}`);
-        
-        try {
-          const { stdout, stderr } = await execAsync(testCommand, {
-            cwd: projectPath,
-            timeout: 120000 // 2 minutes for tests
-          });
-          
-          console.log(stdout);
-          if (stderr) console.error(stderr);
-          
-          projectState.appendTextLog(`\nTest Results:`);
-          projectState.appendTextLog(stdout, false);
-          if (stderr) projectState.appendTextLog(`Test stderr: ${stderr}`, false);
-          
-          projectState.appendLog({
-            action: 'TESTS_RUN',
-            details: 'Executed npm test',
-            success: true
-          });
-          
-          console.log('\n✅ Tests completed!');
-          
-          // Start the server for manual testing
-          console.log(`\n🌐 Starting web server for manual testing...`);
-          
-          const serverProcess = exec('npm start', {
-            cwd: projectPath,
-            detached: false
-          });
-          
-          // Give server time to start
-          await new Promise(resolve => setTimeout(resolve, 2000));
-          
-          console.log(`\n📋 Test Summary:`);
-          console.log(`The automated tests verified that your ${projectName} works correctly.`);
-          
-          if (requirement.toLowerCase().includes('login')) {
-            console.log(`\nWhat was tested:`);
-            console.log(`  ✓ Login form displays with email and password fields`);
-            console.log(`  ✓ Form validates that both fields are filled`);
-            console.log(`  ✓ Correct credentials (test@example.com / secret12) show success`);
-            console.log(`  ✓ Incorrect credentials show error message`);
-            console.log(`  ✓ Loading state displays during submission`);
-          }
-          
-          console.log(`\n🔗 Try it yourself:`);
-          console.log(`  URL: http://localhost:3000`);
-          if (requirement.toLowerCase().includes('login')) {
-            console.log(`  Email: test@example.com`);
-            console.log(`  Password: secret12`);
-          }
-          console.log(`\n⚡ Server is running! Press Ctrl+C to stop.`);
-          
-          projectState.appendTextLog(`\n${'='.repeat(80)}`);
-          projectState.appendTextLog(`SESSION COMPLETED - Existing project tests passed`);
-          projectState.appendTextLog(`Server started at http://localhost:3000`);
-          projectState.appendTextLog(`${'='.repeat(80)}`);
-          
-          // Keep the process alive while server runs
-          process.on('SIGINT', () => {
-            console.log('\n\n👋 Stopping server...');
-            serverProcess.kill();
-            process.exit(0);
-          });
-          
-          // Prevent the orchestrator from exiting
-          await new Promise(() => {});
-          return;
-        } catch (error) {
-          console.error(`\n❌ Test error: ${error.message}`);
-          projectState.appendTextLog(`\nERROR: Test execution failed - ${error.message}`);
-          projectState.appendLog({
-            action: 'TESTS_RUN',
-            details: 'Test execution failed',
-            success: false,
-            error: error.message
-          });
-          return;
-        }
-      }
-      
-      
-    } else {
-      console.log('📄 New project. Creating from scratch...\n');
-      
-      // Create project directory
-      mkdirSync(projectPath, { recursive: true });
-      
-      projectState.appendLog({
-        action: 'PROJECT_CREATED',
-        details: `Created new project: ${projectName}`
+    });
+    
+    // Sort tasks by task number
+    tasks.sort((a, b) => a.taskNumber - b.taskNumber);
+    state.tasks = tasks;
+    
+    // Resume coder tasks from where we left off
+    await runCoderTasks(projectState, requirement, state);
+    return;
+  }
+  
+  // Otherwise, run Project Reviewer as normal
+  const recommendation = await runProjectReviewer(projectState, requirement, state);
+  
+  if (recommendation.includes('test')) {
+    // Just run tests if that's all we need
+    return;
+  }
+  
+  // Otherwise, run Coder to fix issues
+  await runCoderFix(projectState, requirement, recommendation, state);
+}
+
+/**
+ * Execute refactor command flow
+ */
+async function executeRefactor(projectState, requirement, state) {
+  console.log('\n♻️  Refactoring project...\n');
+  
+  // Run Refactor Analyst
+  await runRefactorAnalyst(projectState, requirement, state);
+  
+  // Run Coder for each refactor task
+  await runCoderTasks(projectState, requirement, state);
+}
+
+/**
+ * Execute fix-tests command flow
+ */
+async function executeFixTests(projectState, requirement, state) {
+  console.log('\n🔍 Analyzing test failures from logs...\n');
+  
+  // Read the most recent test output from logs
+  console.log('📋 Reading test output from logs...');
+  let testOutput = '';
+  
+  // Check the text log for recent test output
+  const logFile = join(projectState.projectPath, 'plan-build-test', 'log.txt');
+  if (existsSync(logFile)) {
+    const logContent = readFileSync(logFile, 'utf8');
+    
+    // Find the most recent test output in the log
+    const testOutputMatch = logContent.match(/Running tests[\s\S]*?(?=\n(?:✅|❌|💡|📝|🔧|📊|\[DEBUG\]|$))/g);
+    if (testOutputMatch && testOutputMatch.length > 0) {
+      // Get the last (most recent) test output
+      testOutput = testOutputMatch[testOutputMatch.length - 1];
+      console.log('  ✓ Found test output in logs');
+    }
+  }
+  
+  // If no test output in logs, check if there's a test-results.txt or similar
+  if (!testOutput) {
+    const testResultsFile = join(projectState.projectPath, 'test-results.txt');
+    if (existsSync(testResultsFile)) {
+      testOutput = readFileSync(testResultsFile, 'utf8');
+      console.log('  ✓ Found test results file');
+    }
+  }
+  
+  if (!testOutput) {
+    console.log('  ⚠️  No test output found in logs');
+    console.log('\n📋 Running tests to get current output...');
+    
+    // Playwright will handle killing and starting the server via webServer config
+    
+    // Run the tests
+    try {
+      const { stdout, stderr } = await execAsync('npm test', { 
+        cwd: projectState.projectPath,
+        env: { ...process.env, CI: 'true' }
       });
-      projectState.appendTextLog(`\nCreated new project directory`);
+      testOutput = stdout + '\n' + stderr;
+    } catch (error) {
+      // Tests failed, capture the output
+      testOutput = error.stdout + '\n' + error.stderr;
+    }
+    
+    // Also append to log for future use
+    projectState.appendTextLog('\nRunning tests...\n' + testOutput);
+  }
+  
+  console.log('📊 Test output ready\n');
+  
+  // Get all test files from our standard test directory
+  const testFiles = [];
+  const testDir = join(projectState.projectPath, 'test');
+  if (existsSync(testDir)) {
+    const files = readdirSync(testDir);
+    files.forEach(file => {
+      if (file.endsWith('.test.js')) {
+        const content = readFileSync(join(testDir, file), 'utf8');
+        testFiles.push({ path: join(projectState.projectPath, 'test', file), content });
+      }
+    });
+  }
+  
+  // Get all implementation files from our standard structure
+  const srcFiles = [];
+  
+  // Get src directory files
+  const srcDir = join(projectState.projectPath, 'src');
+  if (existsSync(srcDir)) {
+    const files = readdirSync(srcDir);
+    files.forEach(file => {
+      if (file.endsWith('.js') || file.endsWith('.html') || file.endsWith('.css')) {
+        const content = readFileSync(join(srcDir, file), 'utf8');
+        srcFiles.push({ path: `src/${file}`, content });
+      }
+    });
+  }
+  
+  // Get server.js from root
+  const serverFile = join(projectState.projectPath, 'server.js');
+  if (existsSync(serverFile)) {
+    const content = readFileSync(serverFile, 'utf8');
+    srcFiles.push({ path: 'server.js', content });
+  }
+  
+  // Run Tester to fix the tests
+  console.log('🔧 Fixing tests to match implementation...\n');
+  
+  // Load the tester-fix template
+  let fixPrompt;
+  const testerFixTemplate = loadTemplate('tester-fix');
+  if (testerFixTemplate) {
+    fixPrompt = testerFixTemplate
+      .replace('${testOutput}', testOutput)
+      .replace('${testFiles}', testFiles.map(f => `File: ${f.path}\n${f.content}`).join('\n\n'))
+      .replace('${implementationFiles}', srcFiles.map(f => `File: ${f.path}\n${f.content}`).join('\n\n'));
+  } else {
+    // Fallback prompt
+    fixPrompt = `You are the Tester agent. Your task is to fix the failing tests to match the actual implementation.
+
+Test Output showing failures:
+${testOutput}
+
+Current Test Files:
+${testFiles.map(f => `File: ${f.path}\n${f.content}`).join('\n\n')}
+
+Implementation Files:
+${srcFiles.map(f => `File: ${f.path}\n${f.content}`).join('\n\n')}
+
+Analyze the test failures and update the tests to match what the implementation actually does. Do NOT change the implementation - only fix the tests.
+
+CRITICAL: Check if HTML5 validation (type="email", required, etc.) is preventing form submission. If so, the JavaScript validation will never run and you should test for browser validation behavior instead.
+
+Respond with JSON:
+{
+  "fixed_tests": [
+    {
+      "file_path": "absolute path to test file",
+      "updated_content": "complete updated test file content"
+    }
+  ],
+  "changes_made": [
+    "description of change 1",
+    "description of change 2"
+  ]
+}`;
+  }
+  
+  projectState.appendTextLog(`\nFixing failing tests...`);
+  projectState.appendTaskLog('FIX', 'Updating tests to match implementation');
+  
+  let fixResult;
+  try {
+    fixResult = await callClaude(fixPrompt, 'Tester', projectState);
+  } catch (error) {
+    console.log('❌ Error calling Claude API:', error.message);
+    console.log('\n💡 Falling back to manual analysis...\n');
+    
+    // Simple fallback: analyze test output and provide recommendations
+    console.log('📋 Test failures detected:\n');
+    
+    // Extract failure information from test output
+    const failurePattern = /✘.*?\((.*?)\)/g;
+    const failures = [...testOutput.matchAll(failurePattern)];
+    
+    if (failures.length > 0) {
+      console.log('Failed tests:');
+      failures.forEach((match, i) => {
+        console.log(`  ${i + 1}. ${match[0]}`);
+      });
+      console.log('\n');
+    }
+    
+    // Analyze common error patterns
+    if (testOutput.includes('is already used')) {
+      console.log('🔧 Port conflict detected. Solutions:');
+      const portMatch = testOutput.match(/localhost:(\d+)/);
+      const conflictPort = portMatch ? portMatch[1] : 'PORT';
+      console.log(`  1. Kill the process: lsof -ti:${conflictPort} | xargs kill -9`);
+      console.log('  2. Or update playwright.config.js: reuseExistingServer: true\n');
+    }
+    
+    if (testOutput.includes('Expected') && (testOutput.includes('Received') || testOutput.includes('to contain'))) {
+      console.log('🔧 Assertion mismatch detected. The tests expect different values than what the implementation provides.');
+      console.log('  Review the test expectations and update them to match the actual implementation.\n');
+    }
+    
+    if (testOutput.includes('Timed out') && testOutput.includes('waiting for')) {
+      console.log('🔧 Timeout detected. The test is waiting for something that never appears.');
+      console.log('  Check if the element selector is correct or if the timing needs adjustment.\n');
+    }
+    
+    console.log('📝 To fix tests manually:');
+    console.log('  1. Review the test output above');
+    console.log('  2. Check what the implementation actually does');
+    console.log('  3. Update test expectations to match the implementation');
+    console.log('  4. Run npm test again to verify\n');
+    
+    return;
+  }
+  
+  // Apply the fixes
+  try {
+    const fixes = parseAgentResponse(fixResult, 'Tester');
+    
+    if (fixes && fixes.fixed_tests) {
+      console.log(`📝 Applying fixes to ${fixes.fixed_tests.length} test file(s)...\n`);
       
-      // Initialize git repository
-      console.log('📦 Initializing git repository...');
-      projectState.appendTextLog(`\nInitializing git repository...`);
+      // Write the fixed test files
+      fixes.fixed_tests.forEach(fix => {
+        writeFileSync(fix.file_path, fix.updated_content);
+        console.log(`  ✓ Updated: ${fix.file_path}`);
+      });
+      
+      console.log('\n📋 Changes made:');
+      fixes.changes_made.forEach((change, i) => {
+        console.log(`  ${i + 1}. ${change}`);
+      });
+      
+      console.log('\n✅ Test fixes applied!');
+      
+      // Run tests again to verify fixes
+      console.log('\n🧪 Running tests to verify fixes...\n');
+      
+      // Kill any existing server first
+      try {
+        await execAsync('lsof -ti:3000 | xargs kill -9', { cwd: projectState.projectPath });
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch {
+        // No server to kill
+      }
       
       try {
-        await execAsync('git init', { cwd: projectPath });
-        
-        // Create .gitignore
-        const gitignoreContent = `# Dependencies
-node_modules/
-npm-debug.log*
+        const { stdout } = await execAsync('npm test', { 
+          cwd: projectState.projectPath,
+          env: { ...process.env, CI: 'true' }
+        });
+        console.log('✅ All tests are now passing!\n');
+        console.log(stdout);
+      } catch (error) {
+        console.log('⚠️  Some tests are still failing:\n');
+        console.log(error.stdout || error.message);
+        if (error.stderr) console.log(error.stderr);
+      }
+      
+      // Log the fixes
+      projectState.appendLog({
+        action: 'TESTS_FIXED',
+        files_updated: fixes.fixed_tests.length,
+        changes: fixes.changes_made
+      });
+      
+      projectState.appendTaskLog('COMPLETE', `Fixed ${fixes.fixed_tests.length} test file(s)`);
+      
+    } else {
+      console.log('❌ Unable to parse fix response. Raw response:');
+      console.log(fixResult);
+    }
+    
+  } catch (error) {
+    console.log('❌ Error applying fixes:', error.message);
+    console.log('Raw response:', fixResult);
+  }
+}
 
-# Test results
-test-results/
-playwright-report/
-playwright/.cache/
-
-# Environment
-.env
-.env.local
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
+/**
+ * Initialize git repository
+ */
+async function initializeGit(projectState) {
+  const projectPath = projectState.projectPath;
+  
+  try {
+    console.log('🔧 Initializing git repository...');
+    
+    // Check if git already initialized
+    try {
+      await execAsync('git status', { cwd: projectPath });
+      console.log('  ✓ Git already initialized');
+      return;
+    } catch {
+      // Git not initialized, proceed
+    }
+    
+    // Initialize git
+    await execAsync('git init', { cwd: projectPath });
+    console.log('  ✓ Initialized git repository');
+    
+    // Check if .gitignore exists from template, if not create it
+    const gitignorePath = join(projectPath, '.gitignore');
+    if (!existsSync(gitignorePath)) {
+      const gitignoreContent = `node_modules/
+dist/
+*.log
 .DS_Store
-Thumbs.db
-
-# Plan-Build-Test orchestration files
+.env
 plan-build-test/logs.json
 plan-build-test/log.txt
 plan-build-test/task-log.txt
-
-# Logs
-*.log
-
-# Build outputs
-dist/
-build/
 `;
-        
-        writeFileSync(join(projectPath, '.gitignore'), gitignoreContent);
-        console.log('  ✓ Git repository initialized with .gitignore');
-        
-        // Initial commit
-        await execAsync('git add -A', { cwd: projectPath });
-        await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
-        console.log('  ✓ Created initial commit');
-        
-        projectState.appendLog({
-          action: 'GIT_INITIALIZED',
-          details: 'Created git repo and .gitignore with initial commit'
-        });
-        projectState.appendTextLog(`Git repository initialized with .gitignore and initial commit`);
-        
-      } catch (gitError) {
-        console.log('  ⚠️  Git init failed (git may not be installed)');
-        projectState.appendTextLog(`WARNING: Git init failed - ${gitError.message}`);
-      }
-      
-      // Get architect blueprint or refactor analysis
-      const isRefactor = requirement.toLowerCase().includes('refactor') || 
-                        requirement.toLowerCase().includes('improve existing code') ||
-                        requirement.toLowerCase().includes('clean up');
-      
-      let planResult;
-      if (isRefactor) {
-        console.log('♻️  Refactor Analyst analyzing code...');
-        projectState.appendTextLog(`\nRefactor Analyst analyzing existing code...`);
-        projectState.appendTaskLog('PLAN', `Refactor analysis: ${requirement}`);
-        
-        // Get all existing files for refactor analysis
-        const allFiles = getAllProjectFiles(projectPath).join('\n');
-        planResult = await callClaude(PROMPTS.refactorAnalyst(requirement, allFiles), 'Refactor Analyst', projectState);
-      } else {
-        console.log('🏗️  Architect designing solution...');
-        projectState.appendTextLog(`\nArchitect designing solution...`);
-        projectState.appendTaskLog('PLAN', `New project: ${requirement}`);
-        planResult = await callClaude(PROMPTS.architect(requirement), 'Architect', projectState);
-      }
-      
-      const architectResult = planResult;
-      
-      // Parse tasks
-      state.tasks = parseTasks(architectResult);
-      console.log(`📋 Found ${state.tasks.length} tasks to implement\n`);
-      
-      projectState.appendTextLog(`\nArchitect created ${state.tasks.length} tasks:`);
-      state.tasks.forEach((task, i) => {
-        projectState.appendTextLog(`${i + 1}. ${task.description}`, false);
-        projectState.appendTextLog(`   Test: ${task.test}`, false);
-      });
-      
-      // Sync task counter with logs before assigning new task numbers
-      projectState.syncTaskCounter();
-      
-      // Assign task numbers to each task
-      state.tasks.forEach((task, i) => {
-        const taskNum = projectState.getNextTaskNumber();
-        task.taskNumber = taskNum; // Store task number for later reference
-        projectState.appendLog({
-          action: 'CREATE_TASK',
-          taskNumber: taskNum,
-          taskIndex: i + 1,
-          totalTasks: state.tasks.length,
-          description: task.description,
-          testCommand: task.test
-        });
-      });
-      
-      projectState.appendLog({
-        action: 'ARCHITECT_COMPLETE',
-        details: `Created ${state.tasks.length} tasks`,
-        tasks: state.tasks
-      });
-      
-      // Log each task creation with task numbers
-      state.tasks.forEach((task, i) => {
-        const taskNum = projectState.getNextTaskNumber();
-        task.taskNumber = taskNum; // Store task number for later reference
-        projectState.appendLog({
-          action: 'CREATE_TASK',
-          taskNumber: taskNum,
-          taskIndex: i + 1,
-          totalTasks: state.tasks.length,
-          description: task.description,
-          testCommand: task.test
-        });
-      });
-      
-      // Save initial state
-      // State is now tracked in logs, no need to save separately
+      writeFileSync(gitignorePath, gitignoreContent);
+      console.log('  ✓ Created .gitignore');
+    } else {
+      console.log('  ✓ Using .gitignore from template');
     }
     
-    // Execute remaining tasks
-    const startIndex = state.lastTaskIndex + 1;
-    for (let i = startIndex; i < state.tasks.length; i++) {
-      const task = state.tasks[i];
+    // Initial commit
+    await execAsync('git add -A', { cwd: projectPath });
+    await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
+    console.log('  ✓ Created initial commit\n');
+    
+    projectState.appendLog({
+      action: 'GIT_INITIALIZED',
+      details: 'Created git repo and .gitignore with initial commit'
+    });
+    
+  } catch (error) {
+    console.log('  ⚠️  Git init failed (git may not be installed)\n');
+    projectState.appendTextLog(`WARNING: Git init failed - ${error.message}`);
+  }
+}
+
+/**
+ * Run Architect to create tasks
+ */
+async function runArchitect(projectState, requirement, state) {
+  console.log('🏗️  Architect designing solution...');
+  projectState.appendTextLog(`\nArchitect designing solution...`);
+  projectState.appendTaskLog('PLAN', `Creating tasks for: ${requirement}`);
+  
+  const architectResult = await callClaude(
+    PROMPTS.architect(requirement), 
+    'Architect', 
+    projectState
+  );
+  
+  // Parse tasks and store full architect plan
+  const architectPlan = parseAgentResponse(architectResult, 'Architect');
+  state.architectPlan = architectPlan; // Store for tester
+  
+  state.tasks = parseTasks(architectResult);
+  console.log(`📋 Found ${state.tasks.length} tasks to implement\n`);
+  
+  if (state.tasks.length === 0) {
+    throw new Error('Architect failed to create any tasks');
+  }
+  
+  // Sync task counter with logs before assigning new task numbers
+  projectState.syncTaskCounter();
+  
+  // Assign task numbers and log each task
+  state.tasks.forEach((task, i) => {
+    const taskNum = projectState.getNextTaskNumber();
+    task.taskNumber = taskNum;
+    
+    console.log(`   ${i + 1}. ${task.description}`);
+    console.log(`      Test: ${task.test}`);
+    
+    projectState.appendLog({
+      action: 'CREATE_TASK',
+      taskNumber: taskNum,
+      taskIndex: i + 1,
+      totalTasks: state.tasks.length,
+      description: task.description,
+      testCommand: task.test,
+      requirement: requirement
+    });
+  });
+  
+  console.log('');
+  
+  projectState.appendLog({
+    action: 'ARCHITECT_COMPLETE',
+    details: `Created ${state.tasks.length} tasks`,
+    tasks: state.tasks
+  });
+}
+
+/**
+ * Run Project Reviewer
+ */
+async function runProjectReviewer(projectState, requirement, state) {
+  console.log('📊 Reviewing project state...');
+  
+  const logSummary = projectState.getLogSummary();
+  let taskLogContent = '';
+  
+  try {
+    if (existsSync(projectState.taskLogFile)) {
+      taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
+    }
+  } catch {}
+  
+  projectState.appendTextLog(`\nReviewing project...`);
+  projectState.appendTaskLog('PLAN/REVIEW', 'Analyzing current state');
+  
+  const reviewResult = await callClaude(
+    PROMPTS.reviewProject(projectState.projectPath.split('/').pop(), logSummary, requirement, taskLogContent),
+    'Project Reviewer',
+    projectState
+  );
+  
+  // Parse review JSON
+  const reviewJson = parseAgentResponse(reviewResult, 'Project Reviewer');
+  if (reviewJson && reviewJson.recommendation) {
+    console.log('📊 Project Review:');
+    console.log(`  Status: ${reviewJson.project_state.current_status}`);
+    console.log(`  Recommendation: ${reviewJson.recommendation.next_action}`);
+    console.log(`  Details: ${reviewJson.recommendation.description}\n`);
+    
+    return reviewJson.recommendation.description;
+  }
+  
+  return reviewResult;
+}
+
+/**
+ * Run Refactor Analyst
+ */
+async function runRefactorAnalyst(projectState, requirement, state) {
+  console.log('♻️  Analyzing code for refactoring...');
+  
+  const allFiles = getAllProjectFilesWithContent(projectState.projectPath).join('\n');
+  
+  projectState.appendTextLog(`\nRefactor Analyst analyzing code...`);
+  projectState.appendTaskLog('PLAN', `Refactor analysis: ${requirement}`);
+  
+  const refactorResult = await callClaude(
+    PROMPTS.refactorAnalyst(requirement, allFiles), 
+    'Refactor Analyst', 
+    projectState
+  );
+  
+  // Parse refactor tasks
+  const refactorJson = parseAgentResponse(refactorResult, 'Refactor Analyst');
+  if (refactorJson && refactorJson.refactor_tasks) {
+    state.tasks = refactorJson.refactor_tasks.map(task => ({
+      description: task.description,
+      test: task.test_command || 'npm test',
+      isRefactor: true
+    }));
+    
+    console.log('📋 Refactor Analysis:');
+    console.log(`  Strengths: ${refactorJson.assessment.strengths.length} identified`);
+    console.log(`  Issues: ${refactorJson.assessment.weaknesses.length} found`);
+    console.log(`  Tasks: ${state.tasks.length} refactoring tasks\n`);
+  } else {
+    // Fallback to text parsing
+    state.tasks = parseTasks(refactorResult);
+  }
+  
+  // Assign task numbers
+  projectState.syncTaskCounter();
+  state.tasks.forEach((task, i) => {
+    const taskNum = projectState.getNextTaskNumber();
+    task.taskNumber = taskNum;
+    
+    projectState.appendLog({
+      action: 'CREATE_TASK',
+      taskNumber: taskNum,
+      taskIndex: i + 1,
+      totalTasks: state.tasks.length,
+      description: task.description,
+      testCommand: task.test,
+      taskType: 'refactor',
+      requirement: requirement
+    });
+  });
+}
+
+/**
+ * Run Coder for all tasks
+ */
+async function runCoderTasks(projectState, requirement, state) {
+  console.log('💻 Implementing tasks...\n');
+  
+  // Check if we're resuming from a failed task
+  const lastIncompleteTask = projectState.getLastIncompleteTask();
+  const startIndex = lastIncompleteTask >= 0 ? lastIncompleteTask : 0;
+  
+  if (startIndex > 0) {
+    console.log(`📝 Resuming from task ${startIndex + 1}...\n`);
+    projectState.appendTextLog(`\nResuming from incomplete task ${startIndex + 1}`);
+  }
+  
+  for (let i = startIndex; i < state.tasks.length; i++) {
+    const task = state.tasks[i];
+    
+    console.log(`\n📝 Task ${task.taskNumber} (${i + 1}/${state.tasks.length}): ${task.description}`);
+    projectState.appendTextLog(`\nStarting Task ${task.taskNumber}: ${task.description}`);
+    projectState.appendTaskLog('BUILD', `Task ${task.taskNumber}: ${task.description}`);
+    
+    try {
+      // Get all existing files
+      const allFiles = getAllProjectFiles(projectState.projectPath)
+        .map(f => `File: ${f}\n${readFileSync(join(projectState.projectPath, f), 'utf8')}`)
+        .join('\n\n---\n\n');
       
-      // Ensure task has a number (for tasks loaded from old state)
-      if (!task.taskNumber) {
-        task.taskNumber = projectState.getNextTaskNumber();
-      }
-      
-      console.log(`\n📌 Task #${task.taskNumber} (${i + 1}/${state.tasks.length}): ${task.description}`);
-      console.log(`   Test: ${task.test}`);
-      console.log(`   Progress: ${state.completedTasks.length}/${state.tasks.length} completed`);
-      
-      projectState.appendLog({
-        action: 'START_TASK',
-        taskNumber: task.taskNumber,
-        taskIndex: i + 1,
-        totalTasks: state.tasks.length,
-        description: task.description
-      });
-      
-      // Get current project state
-      const allFiles = getAllProjectFiles(projectPath).join('\n');
-      
-      // Coder implements the task
-      console.log('💻 Coder implementing task...');
-      projectState.appendTextLog(`\nCoder implementing: ${task.description}`);
-      projectState.appendTaskLog('BUILD', `Task #${task.taskNumber}: ${task.description}`);
+      // Call Coder
       const coderResult = await callClaude(
         PROMPTS.coder(requirement, task.description, allFiles), 
         'Coder',
@@ -1158,22 +1407,32 @@ build/
       );
       
       // Parse and create/update files
-      const codeFiles = parseFileContent(coderResult);
+      const coderJson = parseAgentResponse(coderResult, 'Coder');
+      let codeFiles = [];
+      
+      if (coderJson && coderJson.files) {
+        codeFiles = coderJson.files.map(f => ({
+          path: f.path,
+          content: f.content
+        }));
+      } else {
+        // Fallback to text parsing
+        codeFiles = parseFileContent(coderResult);
+      }
+      
       for (const file of codeFiles) {
-        const filePath = join(projectPath, file.path);
+        const filePath = join(projectState.projectPath, file.path);
         ensureDir(filePath);
         writeFileSync(filePath, file.content);
         console.log(`  ✓ ${existsSync(filePath) ? 'Updated' : 'Created'}: ${file.path}`);
         projectState.appendTextLog(`  ${existsSync(filePath) ? 'Updated' : 'Created'}: ${file.path}`);
       }
       
-      // Update state
+      // Mark task complete
       state.completedTasks.push(task.description);
-      state.lastTaskIndex = i;
-      // State is now tracked in logs, no need to save separately
       
       projectState.appendLog({
-        action: 'TASK_COMPLETE',
+        action: 'COMPLETE_TASK',
         taskNumber: task.taskNumber,
         taskIndex: i + 1,
         totalTasks: state.tasks.length,
@@ -1181,152 +1440,127 @@ build/
         filesModified: codeFiles.map(f => f.path)
       });
       
-      console.log(`  ✓ Task ${i + 1} completed`);
-      projectState.appendTextLog(`Task ${i + 1} completed successfully\n`);
-      projectState.appendTaskLog('TEST', `Task ${i + 1} ready for testing`);
+      console.log(`  ✓ Task ${task.taskNumber} completed`);
+      projectState.appendTaskLog('TEST', `Task ${task.taskNumber} ready for testing`);
+      
+      // Clear last incomplete task on success
+      projectState.clearLastIncompleteTask();
+      
+    } catch (error) {
+      // Log task failure
+      console.error(`  ❌ Task ${task.taskNumber} failed: ${error.message}`);
+      
+      projectState.appendLog({
+        action: 'TASK_FAILED',
+        taskNumber: task.taskNumber,
+        taskIndex: i + 1,
+        totalTasks: state.tasks.length,
+        description: task.description,
+        error: error.message
+      });
+      
+      projectState.appendTextLog(`ERROR: Task ${task.taskNumber} failed - ${error.message}`);
+      projectState.appendTaskLog('ERROR', `Task ${task.taskNumber} failed: ${error.message}`);
+      
+      // Store incomplete task info
+      projectState.setLastIncompleteTask(i);
+      
+      // Re-throw to stop execution
+      throw error;
     }
-    
-    // Create final test with retry logic
-    console.log('\n🧪 Creating final validation test...');
+  }
+  
+  console.log('\n✅ All tasks completed!\n');
+}
+
+/**
+ * Run Coder to fix specific issues
+ */
+async function runCoderFix(projectState, requirement, recommendation, state) {
+  console.log('🔧 Fixing issues...\n');
+  
+  const allFiles = getAllProjectFiles(projectState.projectPath)
+    .map(f => `File: ${f}\n${readFileSync(join(projectState.projectPath, f), 'utf8')}`)
+    .join('\n\n---\n\n');
+  
+  projectState.appendTextLog(`\nFixing issues based on: ${recommendation}`);
+  projectState.appendTaskLog('BUILD', `Fixing: ${recommendation}`);
+  
+  const coderResult = await callClaude(
+    PROMPTS.coder(requirement, `Fix this issue: ${recommendation}`, allFiles), 
+    'Coder',
+    projectState
+  );
+  
+  // Parse and update files
+  const coderJson = parseAgentResponse(coderResult, 'Coder');
+  let codeFiles = [];
+  
+  if (coderJson && coderJson.files) {
+    codeFiles = coderJson.files.map(f => ({
+      path: f.path,
+      content: f.content
+    }));
+  } else {
+    codeFiles = parseFileContent(coderResult);
+  }
+  
+  for (const file of codeFiles) {
+    const filePath = join(projectState.projectPath, file.path);
+    ensureDir(filePath);
+    writeFileSync(filePath, file.content);
+    console.log(`  ✓ Fixed: ${file.path}`);
+    projectState.appendTextLog(`  Fixed: ${file.path}`);
+  }
+  
+  console.log('\n✅ Fixes applied!\n');
+}
+
+/**
+ * Create and run tests
+ */
+async function runTests(projectState, projectPath, requirement, state) {
+  // Create tests if they don't exist
+  const testFile = join(projectPath, 'plan-build-test/test/e2e.test.js');
+  
+  if (!existsSync(testFile) && state.tasks.length > 0) {
+    console.log('🧪 Creating tests...');
     console.log('📋 Test will verify:');
     state.tasks.forEach((task, i) => {
       console.log(`   ${i + 1}. ${task.description}`);
     });
     console.log('');
     
-    let finalTestResult = null;
+    projectState.appendTextLog(`\nTester creating validation tests...`);
+    
+    // Get all implementation files so Tester can see what was built
+    const implementationFiles = getAllProjectFilesWithContent(projectPath).join('\n');
+    
+    const testResult = await callClaude(
+      PROMPTS.finalTest(requirement, projectPath, state.architectPlan, implementationFiles), 
+      'Tester',
+      projectState
+    );
+    
+    // Parse test files
+    const testJson = parseAgentResponse(testResult, 'Tester');
     let testFiles = [];
-    let retryCount = 0;
-    const maxRetries = 2;
     
-    while (retryCount <= maxRetries && testFiles.length === 0) {
-      try {
-        if (retryCount > 0) {
-          console.log(`  → Retrying test creation (attempt ${retryCount + 1}/${maxRetries + 1})...`);
-        }
-        
-        projectState.appendTextLog(`\nTester creating validation tests...`);
-        finalTestResult = await callClaude(
-          PROMPTS.finalTest(requirement, projectPath), 
-          'Tester',
-          projectState
-        );
-        
-        // Parse test files with JSON support
-        const testJson = parseAgentResponse(finalTestResult, 'Tester');
-        if (testJson && testJson.test_file) {
-          testFiles = [{
-            path: testJson.test_file.path,
-            content: testJson.test_file.content
-          }];
-        } else {
-          // Fallback to general file parsing
-          testFiles = parseFileContent(finalTestResult);
-        }
-        
-        if (testFiles.length === 0) {
-          console.log('  ⚠️  No test files parsed, creating default test...');
-          projectState.appendTextLog(`Warning: No test files parsed from Claude response, using default test template`);
-          // Create a default test if Claude didn't return proper format
-          testFiles = [{
-            path: 'plan-build-test/test/e2e.test.js',
-            content: `import { test, expect } from '@playwright/test';
-
-test.describe('${projectName} Tests', () => {
-  test('should load the page', async ({ page }) => {
-    await page.goto('/');
-    await expect(page).toHaveTitle(/.*/);
-  });
-
-  test('main functionality works', async ({ page }) => {
-    await page.goto('/');
-    // Add specific tests based on the requirement
-    ${requirement.toLowerCase().includes('login') ? `
-    // Login form test
-    await expect(page.locator('input[type="email"], input[name*="email"]')).toBeVisible();
-    await expect(page.locator('input[type="password"]')).toBeVisible();
-    await expect(page.locator('button[type="submit"], input[type="submit"]')).toBeVisible();
-    
-    // Test login functionality
-    await page.fill('input[type="email"], input[name*="email"]', 'test@example.com');
-    await page.fill('input[type="password"]', 'secret12');
-    await page.click('button[type="submit"], input[type="submit"]');
-    
-    // Wait for success message
-    await expect(page.locator('text=/success|welcome|logged/i')).toBeVisible({ timeout: 5000 });
-    ` : '// Add your specific test logic here'}
-  });
-});`
-          }];
-        }
-        
-        break; // Success, exit retry loop
-      } catch (error) {
-        retryCount++;
-        if (retryCount > maxRetries) {
-          console.log('  ⚠️  Failed to create test via Claude, using default test template...');
-          projectState.appendTextLog(`Warning: Failed to create test via Claude after ${maxRetries + 1} attempts, using default template`);
-          // Create a basic default test
-          testFiles = [{
-            path: 'plan-build-test/test/e2e.test.js',
-            content: `import { test, expect } from '@playwright/test';
-
-test.describe('${projectName} Tests', () => {
-  test('page loads successfully', async ({ page }) => {
-    await page.goto('/');
-    await expect(page).toHaveTitle(/.+/); // Should have some title
-    
-    // Basic checks for common elements
-    const body = await page.locator('body');
-    await expect(body).toBeVisible();
-  });
-
-  test('main functionality', async ({ page }) => {
-    await page.goto('/');
-    
-    // Try to find and test main functionality based on project type
-    ${requirement.toLowerCase().includes('login') ? `
-    // Test login form
-    const emailInput = page.locator('input[type="email"], input[name*="email"], input[placeholder*="email" i]').first();
-    const passwordInput = page.locator('input[type="password"]').first();
-    const submitButton = page.locator('button[type="submit"], input[type="submit"], button:has-text("Login"), button:has-text("Sign")').first();
-    
-    // Check form elements exist
-    await expect(emailInput).toBeVisible({ timeout: 5000 });
-    await expect(passwordInput).toBeVisible({ timeout: 5000 });
-    await expect(submitButton).toBeVisible({ timeout: 5000 });
-    
-    // Test with correct credentials
-    await emailInput.fill('test@example.com');
-    await passwordInput.fill('secret12');
-    await submitButton.click();
-    
-    // Wait for success indication
-    await page.waitForTimeout(2000); // Give time for any animations
-    const successIndicator = page.locator('text=/success|welcome|logged|dashboard/i');
-    const errorIndicator = page.locator('text=/error|invalid|incorrect|failed/i');
-    
-    // Should show success, not error
-    const hasSuccess = await successIndicator.count() > 0;
-    const hasError = await errorIndicator.count() > 0;
-    
-    if (!hasSuccess && hasError) {
-      throw new Error('Login failed - showing error message instead of success');
-    }
-    
-    if (!hasSuccess) {
-      // Take screenshot for debugging
-      await page.screenshot({ path: 'test-results/login-test-failure.png' });
-      throw new Error('Login succeeded but no success message found');
-    }` : `
-    // Generic test - look for interactive elements
-    const buttons = await page.locator('button, input[type="submit"], a[href]').count();
-    expect(buttons).toBeGreaterThan(0); // Should have some interactive elements`}
-  });
-});`
-          }];
-        }
+    if (testJson && testJson.test_file) {
+      testFiles = [{
+        path: testJson.test_file.path,
+        content: testJson.test_file.content
+      }];
+      
+      // Show test cases
+      if (testJson.test_file.test_cases) {
+        console.log('  Tests included:');
+        testJson.test_file.test_cases.forEach(tc => {
+          console.log(`    • ${tc.name}`);
+        });
       }
+    } else {
+      testFiles = parseFileContent(testResult);
     }
     
     // Create test files
@@ -1335,262 +1569,178 @@ test.describe('${projectName} Tests', () => {
       ensureDir(filePath);
       writeFileSync(filePath, file.content);
       console.log(`  ✓ Created: ${file.path}`);
-      
-      // Extract test names from the test file
-      const testMatches = file.content.match(/test\(['"]([^'"]+)['"]/g);
-      if (testMatches && testMatches.length > 0) {
-        console.log('     Tests included:');
-        testMatches.forEach(match => {
-          const testName = match.match(/test\(['"]([^'"]+)['"]/)[1];
-          console.log(`       • ${testName}`);
-        });
-      }
-      
-      projectState.appendTextLog(`  Created: ${file.path}`);
     }
     
-    projectState.appendLog({
-      action: 'TESTS_CREATED',
-      details: finalTestResult ? 'Created Playwright tests' : 'Created default test template',
-      files: testFiles.map(f => f.path)
-    });
-    
-    // Create/Update package.json
-    const packageJsonPath = join(projectPath, 'package.json');
-    if (!existsSync(packageJsonPath)) {
-      const packageJson = {
-        name: projectName,
-        version: "1.0.0",
-        description: requirement,
-        main: "src/index.js",
-        scripts: {
-          test: "playwright test",
-          "test:ui": "playwright test --ui",
-          "test:headed": "playwright test --headed",
-          start: "node server.js",
-          dev: "node server.js",
-          serve: "node server.js"
-        },
-        devDependencies: {
-          "@playwright/test": "^1.40.0",
-          "playwright": "^1.40.0",
-          "http-server": "^14.1.1"
-        },
-        dependencies: {
-          "express": "^4.18.0"
-        }
-      };
-      
-      writeFileSync(packageJsonPath, JSON.stringify(packageJson, null, 2));
-      console.log(`  ✓ Created: package.json`);
-      projectState.appendTextLog(`  Created: package.json`);
-    }
-    
-    // Create Playwright config
-    const playwrightConfig = `import { defineConfig } from '@playwright/test';
-
-export default defineConfig({
-  testDir: './plan-build-test/test',
-  timeout: 30000,
-  use: {
-    baseURL: 'http://localhost:3000/plan-build-test',
-    headless: true,
-  },
-  webServer: {
-    command: 'npm run serve',
-    port: 3000,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  },
-});`;
-    
-    writeFileSync(join(projectPath, 'playwright.config.js'), playwrightConfig);
-    console.log(`  ✓ Created: playwright.config.js`);
-    projectState.appendTextLog(`  Created: playwright.config.js`);
-    
-    // Don't create a generic server - let the Coder create it based on the specific requirements
-    // The Coder agent knows whether it's a static site, EJS app, API, etc.
-    
-    // Update final state
-    state.status = 'completed';
-    // State is now tracked in logs, no need to save separately
-    
-    projectState.appendLog({
-      action: 'PROJECT_COMPLETE',
-      details: 'All tasks completed successfully'
-    });
-    
-    console.log(`\n✅ Project completed successfully!`);
-    console.log(`\n📦 Installing dependencies...`);
-    
+    // Ensure package.json and playwright.config.js exist
+    await ensureTestSetup(projectPath, projectState);
+  }
+  
+  // Install dependencies if needed
+  if (!existsSync(join(projectPath, 'node_modules'))) {
+    console.log('\n📦 Installing dependencies...');
     try {
-      // Install dependencies
-      const { stdout: installOut, stderr: installErr } = await execAsync('npm install', {
+      await execAsync('npm install', { 
         cwd: projectPath,
-        timeout: 300000 // 5 minutes for npm install
+        timeout: 120000 
       });
-      
-      if (installErr && !installErr.includes('npm WARN')) {
-        console.error(`Installation warnings: ${installErr}`);
-      }
-      console.log(`  ✓ Dependencies installed`);
-      projectState.appendTextLog(`\nDependencies installed successfully`);
-      
-      projectState.appendLog({
-        action: 'DEPENDENCIES_INSTALLED',
-        details: 'Ran npm install successfully'
-      });
-      
-      // Run tests
-      console.log(`\n🧪 Running tests...`);
-      let testOut, testErr;
-      try {
-        const result = await execAsync('npm test', {
-          cwd: projectPath,
-          timeout: 120000 // 2 minutes for tests
-        });
-        testOut = result.stdout;
-        testErr = result.stderr;
-        
-        console.log(testOut);
-        if (testErr) console.error(testErr);
-      } catch (testError) {
-        console.error(`\n❌ Test failed with error:`);
-        console.error(`  Exit code: ${testError.code}`);
-        console.error(`  Command: ${testError.cmd}`);
-        if (testError.stdout) {
-          console.error(`\n📋 Test output:`);
-          console.error(testError.stdout);
-        }
-        if (testError.stderr) {
-          console.error(`\n⚠️  Test errors:`);
-          console.error(testError.stderr);
-        }
-        throw testError;
-      }
-      
-      projectState.appendTextLog(`\nTest Results:`);
-      projectState.appendTextLog(testOut, false);
-      if (testErr) projectState.appendTextLog(`Test stderr: ${testErr}`, false);
-      
-      projectState.appendLog({
-        action: 'TESTS_RUN',
-        details: 'Executed npm test automatically',
-        success: true
-      });
-      
-      console.log(`\n✅ All tests passed!`);
-      projectState.appendTaskLog('TEST', 'All automated tests passed');
-      
-      // Commit the completed work
-      console.log('\n📦 Committing completed work...');
-      try {
-        await execAsync('git add -A', { cwd: projectPath });
-        await execAsync(`git commit -m "Completed: ${requirement.substring(0, 50)}..."`, { cwd: projectPath });
-        console.log('  ✓ Changes committed');
-      } catch (e) {
-        console.log('  ⚠️  No changes to commit');
-      }
-      
-      // Start the server for manual testing
-      console.log(`\n🌐 Starting web server for manual testing...`);
-      
+      console.log('  ✓ Dependencies installed');
+    } catch (error) {
+      console.log('  ⚠️  Failed to install dependencies');
+    }
+  }
+  
+  // Run tests
+  console.log('\n🧪 Running tests...\n');
+  
+  // Kill any existing server on port 3000 first
+  try {
+    await execAsync('lsof -ti:3000 | xargs kill -9', { cwd: projectPath });
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  } catch {
+    // No server to kill
+  }
+  
+  let testOutput = '';
+  try {
+    const { stdout, stderr } = await execAsync('npm test', {
+      cwd: projectPath,
+      env: { ...process.env, CI: 'true' },
+      timeout: 120000
+    });
+    
+    testOutput = stdout + '\n' + stderr;
+    console.log(stdout);
+    if (stderr) console.error(stderr);
+    
+    // Log the test output for future use
+    projectState.appendTextLog('\nRunning tests...\n' + testOutput);
+    
+    projectState.appendLog({
+      action: 'TESTS_PASSED',
+      details: 'All tests passed successfully'
+    });
+    
+    console.log('\n✅ All tests passed!');
+    
+    // Try to start server
+    try {
+      console.log('\n🌐 Starting server...');
       const serverProcess = exec('npm start', {
         cwd: projectPath,
         detached: false
       });
       
-      // Give server time to start
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      console.log(`\n📋 Test Summary:`);
-      console.log(`The automated tests verified that your ${projectName} works correctly.`);
-      
-      if (requirement.toLowerCase().includes('login')) {
-        console.log(`\nWhat was tested:`);
-        console.log(`  ✓ Login form displays with email and password fields`);
-        console.log(`  ✓ Form validates that both fields are filled`);
-        console.log(`  ✓ Correct credentials (test@example.com / secret12) show success`);
-        console.log(`  ✓ Incorrect credentials show error message`);
-        console.log(`  ✓ Loading state displays during submission`);
-      }
-      
-      console.log(`\n🔗 Try it yourself:`);
+      console.log('\n🎉 Project ready!');
       console.log(`  URL: http://localhost:3000`);
-      if (requirement.toLowerCase().includes('login')) {
-        console.log(`  Email: test@example.com`);
-        console.log(`  Password: secret12`);
-      }
-      console.log(`\n⚡ Server is running! Press Ctrl+C to stop.`);
+      console.log(`  Press Ctrl+C to stop the server\n`);
       
-      projectState.appendTextLog(`\n${'='.repeat(80)}`);
-      projectState.appendTextLog(`SESSION COMPLETED SUCCESSFULLY`);
-      projectState.appendTextLog(`All tests passed!`);
-      projectState.appendTextLog(`Server started at http://localhost:3000`);
-      projectState.appendTextLog(`${'='.repeat(80)}`);
-      
-      // Keep the process alive while server runs
-      process.on('SIGINT', () => {
-        console.log('\n\n👋 Stopping server...');
-        serverProcess.kill();
-        process.exit(0);
-      });
-      
-      // Prevent the orchestrator from exiting
+      // Keep process alive
       await new Promise(() => {});
-      
-    } catch (error) {
-      console.error(`\n❌ Error during setup/testing: ${error.message}`);
-      
-      projectState.appendTextLog(`\nERROR during setup/testing: ${error.message}`);
-      projectState.appendTextLog(`Stack trace: ${error.stack}`, false);
-      
-      projectState.appendLog({
-        action: 'SETUP_ERROR',
-        details: error.message,
-        stack: error.stack
-      });
-      
-      console.log(`\nManual steps needed:`);
-      console.log(`  cd ${projectPath}`);
-      console.log(`  npm install`);
-      console.log(`  npm test`);
+    } catch {
+      console.log('\n✅ Project completed successfully!');
     }
     
   } catch (error) {
-    state.status = 'error';
-    state.error = error.message;
-    // State is now tracked in logs, no need to save separately
+    // Tests failed, capture the output
+    testOutput = (error.stdout || '') + '\n' + (error.stderr || '');
     
-    projectState.appendTextLog(`\n${'='.repeat(80)}`);
-    projectState.appendTextLog(`CRITICAL ERROR: ${error.message}`);
-    projectState.appendTextLog(`Stack trace: ${error.stack}`, false);
-    projectState.appendTextLog(`${'='.repeat(80)}`);
+    console.error('\n❌ Tests failed!');
+    console.log(error.stdout || error.message);
+    if (error.stderr) console.error(error.stderr);
+    
+    // Log the test output for future use (for fix-tests command)
+    projectState.appendTextLog('\nRunning tests...\n' + testOutput);
     
     projectState.appendLog({
-      action: 'ERROR',
-      details: error.message,
-      stack: error.stack
+      action: 'TESTS_FAILED',
+      error: error.message,
+      output: testOutput
     });
     
-    console.error(`\n❌ Error: ${error.message}`);
+    console.log('\n💡 Tip: Run "npm run fix-tests" to automatically fix the failing tests');
+    
+    process.exit(1);
   }
 }
 
-// CLI interface - only run if called directly
-if (import.meta.url === `file://${process.argv[1]}`) {
-  if (process.argv.length < 4) {
-    console.error('❌ Error: Both project name and requirement are required');
-    console.error('\nUsage:');
-    console.error('  node orchestrator.js "<project-name>" "<requirement>"');
-    console.error('\nExamples:');
-    console.error('  node orchestrator.js "todo-app" "build a todo list with add and delete"');
-    console.error('  node orchestrator.js "login-page" "create login page with test@example.com/secret123"');
-    process.exit(1);
+/**
+ * Ensure test setup files exist
+ */
+async function ensureTestSetup(projectPath, projectState) {
+  // Check for package.json and ensure test scripts
+  const packagePath = join(projectPath, 'package.json');
+  let packageContent;
+  
+  if (existsSync(packagePath)) {
+    // Read existing package.json
+    packageContent = JSON.parse(readFileSync(packagePath, 'utf8'));
+    
+    // Ensure test scripts exist
+    if (!packageContent.scripts) {
+      packageContent.scripts = {};
+    }
+    if (!packageContent.scripts.test) {
+      packageContent.scripts.test = "playwright test";
+      packageContent.scripts["test:ui"] = "playwright test --ui";
+    }
+    
+    // Ensure playwright is in devDependencies
+    if (!packageContent.devDependencies) {
+      packageContent.devDependencies = {};
+    }
+    if (!packageContent.devDependencies["@playwright/test"]) {
+      packageContent.devDependencies["@playwright/test"] = "^1.40.0";
+    }
+    
+    // Write back
+    writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
+    console.log('  ✓ Updated: package.json (added test scripts)');
+  } else {
+    // Create new package.json
+    packageContent = {
+      name: projectPath.split('/').pop(),
+      version: "1.0.0",
+      type: "module",
+      scripts: {
+        start: "node server.js",
+        test: "playwright test",
+        "test:ui": "playwright test --ui"
+      },
+      devDependencies: {
+        "@playwright/test": "^1.40.0"
+      },
+      dependencies: {
+        "express": "^4.18.2"
+      }
+    };
+    writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
+    console.log('  ✓ Created: package.json');
   }
+  
+  // Check for playwright.config.js
+  const playwrightPath = join(projectPath, 'playwright.config.js');
+  if (!existsSync(playwrightPath)) {
+    const configContent = `import { defineConfig } from '@playwright/test';
 
-  const projectName = process.argv[2];
-  const requirement = process.argv.slice(3).join(' ');
-
-  runOrchestrator(projectName, requirement);
+export default defineConfig({
+  testDir: './test',
+  timeout: 30000,
+  use: {
+    baseURL: 'http://localhost:3000/plan-build-test',
+    trace: 'on-first-retry',
+  },
+  webServer: {
+    command: 'npm start',
+    port: 3000,
+    reuseExistingServer: !process.env.CI,
+    timeout: 10000,
+    stderr: 'pipe',
+    stdout: 'pipe',
+  },
+});`;
+    writeFileSync(playwrightPath, configContent);
+    console.log('  ✓ Created: playwright.config.js');
+  }
 }

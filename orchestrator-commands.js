@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runOrchestratorNew } from './orchestrator-new.js';
+import { runOrchestratorNew } from './orchestrator.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { exec } from 'child_process';
@@ -265,8 +265,19 @@ async function main() {
       }
       break;
 
+    case 'fix-tests':
+      const fixTestsProject = getCurrentProject();
+      if (!fixTestsProject) {
+        console.error('No active project. Use npm run new-project or npm run change-project first.');
+        process.exit(1);
+      }
+      console.log(`\n🔍 Analyzing and fixing failing tests in ${fixTestsProject}...`);
+      console.log('Running: Read Logs → Analyze Failures → Fix Tests\n');
+      await runOrchestratorNew(fixTestsProject, 'Fix failing tests to match implementation (do not change code)', 'fix-tests');
+      break;
+
     default:
-      console.error('Unknown command. Use: create-project, task, fix, refactor, change-project, status, or start-project');
+      console.error('Unknown command. Use: create-project, task, fix, refactor, change-project, status, fix-tests, or start-project');
       process.exit(1);
   }
 }

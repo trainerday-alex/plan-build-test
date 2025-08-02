@@ -26,9 +26,11 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
   "status": "SUCCESS",
   "project_state": {
     "completed_cycles": 3,
-    "current_status": "working|broken|needs_improvement",
+    "current_status": "working|broken|needs_improvement|new_project",
     "last_action": "What was just done",
-    "test_results": "all_passing|some_failing|not_tested"
+    "test_results": "all_passing|some_failing|not_tested",
+    "code_quality": "good|needs_improvement|poor",
+    "user_experience": "intuitive|confusing|broken"
   },
   "completed_tasks": [
     "Task 1 description",
@@ -51,8 +53,10 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
 ```
 
 Requirements:
-- Analyze logs to understand current state
-- Provide specific, actionable next steps
+- Analyze logs to understand current state and progress
+- Identify any blocking issues or incomplete features
+- Assess code quality and user experience from available information
+- Provide specific, actionable next steps with clear priorities
 - If logs are empty/missing, return a valid response indicating a new project:
   - Set status to "SUCCESS"
   - Set current_status to "new_project"

@@ -46,6 +46,14 @@ Requirements:
 - Add input validation
 - No code duplication
 - Content must be complete, working code
+- Always include proper error handling with try/catch blocks
+- Validate all user inputs before processing
+- Add meaningful error messages for users
+- IMPORTANT Form Validation: If using type="email" or other HTML5 validation:
+  - Browser validation happens BEFORE JavaScript validation
+  - Invalid emails won't trigger JS validation if type="email" is used
+  - Consider using type="text" if you need custom email validation messages
+  - Or use novalidate attribute on form to disable browser validation
 - IMPORTANT: Template files already exist - use "modify" action when updating them:
   - server.js (Express server with /plan-build-test route)
   - package.json (with all scripts)

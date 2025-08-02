@@ -24,7 +24,9 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
       "description": "Task description here",
       "test_command": "exact command to test",
       "expected_output": "what you should see",
-      "dependencies": []
+      "dependencies": [],
+      "estimated_time": "5-10 minutes",
+      "complexity": "low|medium|high"
     }
   ],
   "file_structure": [
@@ -55,6 +57,16 @@ Requirements:
 - Focus tasks on implementing the specific feature requirements
 - Each task that creates UI should update what's served at /plan-build-test
 - Set status to "FAILURE" with error field if anything is unclear
+- Tasks should be ordered by dependencies (prerequisite tasks first)
+- Each task should be completable in 10-15 minutes
+- Break large tasks into smaller, testable chunks
+
+Form Validation Considerations:
+- When designing forms, be explicit about validation approach
+- HTML5 validation (type="email", required) happens BEFORE JavaScript
+- If using HTML5 validation, tests can't check custom JS error messages for those cases
+- Consider whether to use HTML5 validation, JS validation, or both
+- Make test strategy aware of which validation approach is used
 
 File Structure Rules:
 - server.js and package.json go in project root (no prefix)

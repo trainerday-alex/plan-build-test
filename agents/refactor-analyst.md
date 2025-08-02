@@ -34,6 +34,8 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
       "reason": "Why this improves the code",
       "files_affected": ["file1.js", "file2.js"],
       "risk": "low|medium|high",
+      "priority": "low|medium|high",
+      "estimated_effort": "5-10 minutes",
       "test_command": "npm test"
     }
   ],
@@ -48,8 +50,10 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
 
 Requirements:
 - Each refactor task must maintain existing functionality
-- Tasks should be independently testable
-- Focus on real improvements, not cosmetic changes
+- Tasks should be independently testable and ordered by priority
+- Focus on real improvements that enhance maintainability, performance, or readability
+- Avoid cosmetic changes that don't add meaningful value
+- High-priority tasks should address critical code smells or security issues
 - Set status to "FAILURE" with error field if no code to analyze
 
 Reply with JSON only.

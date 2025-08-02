@@ -16,7 +16,8 @@
     "refactor": "node orchestrator-commands.js refactor",
     "change-project": "node orchestrator-commands.js change-project",
     "status": "node orchestrator-commands.js status",
-    "start-project": "node orchestrator-commands.js start-project"
+    "start-project": "node orchestrator-commands.js start-project",
+    "fix-tests": "node orchestrator-commands.js fix-tests"
   },
   "dependencies": {
     "dotenv": "^16.0.0"

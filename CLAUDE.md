@@ -1,5 +1,11 @@
 # CLAUDE.md
 
+IMPORTANT: You cannot run Claude CLI commands from within Claude Code. The orchestrator commands (npm run new-project, npm run task, etc.) must be run from the terminal, not from within Claude Code.
+
+Note: The fix-tests command requires Claude API to be configured. If you get "Execution error", ensure:
+1. Claude CLI is installed and configured with API key
+2. Run the command from terminal, not from within Claude Code
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Commands
@@ -14,6 +20,7 @@ npm test
 npm run create-project <name> <description>  # Create a new project
 npm run task <description>                 # Add new feature to current project
 npm run fix                               # Fix failing tests in current project
+npm run fix-tests                         # Read logs and fix tests to match implementation
 npm run refactor                          # Improve code quality in current project
 npm run change-project <name>             # Switch to existing project
 npm run status                            # Show current project status
