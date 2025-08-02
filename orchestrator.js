@@ -209,10 +209,11 @@ Reply with plain text only.`;
 class ProjectState {
   constructor(projectPath) {
     this.projectPath = projectPath;
-    this.logFile = join(projectPath, 'orchestrator-log.json');
+    this.logFile = join(projectPath, 'logs.json');
     this.stateFile = join(projectPath, 'orchestrator-state.json');
     this.textLogFile = join(projectPath, 'log.txt');
     this.taskLogFile = join(projectPath, 'task-log.txt');
+    this.currentTaskNumber = 0;
   }
 
   exists() {
@@ -278,14 +279,29 @@ class ProjectState {
     this.saveState(fullState);
   }
 
+  getNextTaskNumber() {
+    this.currentTaskNumber++;
+    return this.currentTaskNumber;
+  }
+
+  getCurrentTaskNumber() {
+    return this.currentTaskNumber;
+  }
+
   appendLog(entry) {
     let log = [];
     if (existsSync(this.logFile)) {
       log = JSON.parse(readFileSync(this.logFile, 'utf8'));
+      // Update task number from existing logs
+      const lastTaskEntry = [...log].reverse().find(e => e.taskNumber);
+      if (lastTaskEntry) {
+        this.currentTaskNumber = lastTaskEntry.taskNumber;
+      }
     }
     
     log.push({
       timestamp: new Date().toISOString(),
+      taskNumber: this.currentTaskNumber || null,
       ...entry
     });
     
@@ -641,6 +657,21 @@ export async function runOrchestrator(projectName, requirement) {
           tasks: state.tasks
         });
         
+        // Log each refactor task creation with task numbers
+        state.tasks.forEach((task, i) => {
+          const taskNum = projectState.getNextTaskNumber();
+          task.taskNumber = taskNum; // Store task number for later reference
+          projectState.appendLog({
+            action: 'CREATE_TASK',
+            taskNumber: taskNum,
+            taskIndex: i + 1,
+            totalTasks: state.tasks.length,
+            description: task.description,
+            testCommand: task.test,
+            taskType: 'refactor'
+          });
+        });
+        
         // Save updated state
         projectState.saveRequirementState(requirement, state);
         
@@ -859,7 +890,8 @@ Thumbs.db
 # Logs
 *.log
 log.txt
-orchestrator-log.json
+logs.json
+task-log.txt
 
 # Build outputs
 dist/
@@ -924,6 +956,20 @@ build/
         tasks: state.tasks
       });
       
+      // Log each task creation with task numbers
+      state.tasks.forEach((task, i) => {
+        const taskNum = projectState.getNextTaskNumber();
+        task.taskNumber = taskNum; // Store task number for later reference
+        projectState.appendLog({
+          action: 'CREATE_TASK',
+          taskNumber: taskNum,
+          taskIndex: i + 1,
+          totalTasks: state.tasks.length,
+          description: task.description,
+          testCommand: task.test
+        });
+      });
+      
       // Save initial state
       projectState.saveRequirementState(requirement, state);
     }
@@ -932,9 +978,17 @@ build/
     const startIndex = state.lastTaskIndex + 1;
     for (let i = startIndex; i < state.tasks.length; i++) {
       const task = state.tasks[i];
-      console.log(`\n📌 Task ${i + 1}/${state.tasks.length}: ${task.description}`);
+      console.log(`\n📌 Task #${task.taskNumber} (${i + 1}/${state.tasks.length}): ${task.description}`);
       console.log(`   Test: ${task.test}`);
       console.log(`   Progress: ${state.completedTasks.length}/${state.tasks.length} completed`);
+      
+      projectState.appendLog({
+        action: 'START_TASK',
+        taskNumber: task.taskNumber,
+        taskIndex: i + 1,
+        totalTasks: state.tasks.length,
+        description: task.description
+      });
       
       // Get current project state
       const allFiles = getAllProjectFiles(projectPath).join('\n');
@@ -942,7 +996,7 @@ build/
       // Coder implements the task
       console.log('💻 Coder implementing task...');
       projectState.appendTextLog(`\nCoder implementing: ${task.description}`);
-      projectState.appendTaskLog('BUILD', `Task ${i + 1}: ${task.description}`);
+      projectState.appendTaskLog('BUILD', `Task #${task.taskNumber}: ${task.description}`);
       const coderResult = await callClaude(
         PROMPTS.coder(requirement, task.description, allFiles), 
         'Coder',
@@ -966,8 +1020,10 @@ build/
       
       projectState.appendLog({
         action: 'TASK_COMPLETE',
-        taskNumber: i + 1,
-        task: task.description,
+        taskNumber: task.taskNumber,
+        taskIndex: i + 1,
+        totalTasks: state.tasks.length,
+        description: task.description,
         filesModified: codeFiles.map(f => f.path)
       });
       
