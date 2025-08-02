@@ -1307,13 +1307,31 @@ app.listen(PORT, () => {
       
       // Run tests
       console.log(`\n🧪 Running tests...`);
-      const { stdout: testOut, stderr: testErr } = await execAsync('npm test', {
-        cwd: projectPath,
-        timeout: 120000 // 2 minutes for tests
-      });
-      
-      console.log(testOut);
-      if (testErr) console.error(testErr);
+      let testOut, testErr;
+      try {
+        const result = await execAsync('npm test', {
+          cwd: projectPath,
+          timeout: 120000 // 2 minutes for tests
+        });
+        testOut = result.stdout;
+        testErr = result.stderr;
+        
+        console.log(testOut);
+        if (testErr) console.error(testErr);
+      } catch (testError) {
+        console.error(`\n❌ Test failed with error:`);
+        console.error(`  Exit code: ${testError.code}`);
+        console.error(`  Command: ${testError.cmd}`);
+        if (testError.stdout) {
+          console.error(`\n📋 Test output:`);
+          console.error(testError.stdout);
+        }
+        if (testError.stderr) {
+          console.error(`\n⚠️  Test errors:`);
+          console.error(testError.stderr);
+        }
+        throw testError;
+      }
       
       projectState.appendTextLog(`\nTest Results:`);
       projectState.appendTextLog(testOut, false);
