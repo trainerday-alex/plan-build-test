@@ -32,7 +32,7 @@ cp .env.example .env
 # - AGENTS_PATH: where agent templates are stored (optional)
 
 # 4. Create your first project
-npm run new-project my-app "build a todo list with add and delete"
+npm run create-project my-app "build a todo list with add and delete"
 
 # 5. Add features (works on current project)
 npm run task "add ability to edit todos"
@@ -65,7 +65,7 @@ After tests pass, the web server stays running so you can try it yourself.
 
 ### Create a New Project
 ```bash
-npm run new-project <name> <description>
+npm run create-project <name> <description>
 ```
 Creates a new project and sets it as current. Includes:
 - Project folder with git init
@@ -110,7 +110,7 @@ This creates a clean git history showing your project evolution.
 
 ```bash
 # Day 1: Create a login page
-npm run new-project login-app "build a login page"
+npm run create-project login-app "build a login page"
 # (builds and tests automatically, server starts for manual testing)
 
 # Day 2: Add password reset

@@ -11,7 +11,7 @@ npm test
 
 ### Project Management Commands
 ```bash
-npm run new-project <name> <description>  # Create a new project
+npm run create-project <name> <description>  # Create a new project
 npm run task <description>                 # Add new feature to current project
 npm run fix                               # Fix failing tests in current project
 npm run refactor                          # Improve code quality in current project

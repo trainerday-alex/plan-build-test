@@ -9,7 +9,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test test.js",
-    "new-project": "node orchestrator-commands.js new-project",
+    "create-project": "node orchestrator-commands.js new-project",
     "task": "node orchestrator-commands.js task",
     "fix": "node orchestrator-commands.js fix",
     "refactor": "node orchestrator-commands.js refactor",
