@@ -1025,6 +1025,20 @@ build/
         projectState.appendTextLog(`   Test: ${task.test}`, false);
       });
       
+      // Assign task numbers to each task
+      state.tasks.forEach((task, i) => {
+        const taskNum = projectState.getNextTaskNumber();
+        task.taskNumber = taskNum; // Store task number for later reference
+        projectState.appendLog({
+          action: 'CREATE_TASK',
+          taskNumber: taskNum,
+          taskIndex: i + 1,
+          totalTasks: state.tasks.length,
+          description: task.description,
+          testCommand: task.test
+        });
+      });
+      
       projectState.appendLog({
         action: 'ARCHITECT_COMPLETE',
         details: `Created ${state.tasks.length} tasks`,
@@ -1053,6 +1067,12 @@ build/
     const startIndex = state.lastTaskIndex + 1;
     for (let i = startIndex; i < state.tasks.length; i++) {
       const task = state.tasks[i];
+      
+      // Ensure task has a number (for tasks loaded from old state)
+      if (!task.taskNumber) {
+        task.taskNumber = projectState.getNextTaskNumber();
+      }
+      
       console.log(`\n📌 Task #${task.taskNumber} (${i + 1}/${state.tasks.length}): ${task.description}`);
       console.log(`   Test: ${task.test}`);
       console.log(`   Progress: ${state.completedTasks.length}/${state.tasks.length} completed`);
