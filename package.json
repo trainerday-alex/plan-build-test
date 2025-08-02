@@ -9,12 +9,14 @@
   "type": "module",
   "scripts": {
     "test": "echo 'This is the orchestrator project. To test generated projects, use npm test in the project directory.'",
-    "create-project": "node orchestrator-commands.js new-project",
+    "create-project": "node orchestrator-commands.js create-project",
+    "new-project": "node orchestrator-commands.js create-project",
     "task": "node orchestrator-commands.js task",
     "fix": "node orchestrator-commands.js fix",
     "refactor": "node orchestrator-commands.js refactor",
     "change-project": "node orchestrator-commands.js change-project",
-    "status": "node orchestrator-commands.js status"
+    "status": "node orchestrator-commands.js status",
+    "start-project": "node orchestrator-commands.js start-project"
   },
   "dependencies": {
     "dotenv": "^16.0.0"

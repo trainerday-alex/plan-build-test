@@ -1,3 +1,9 @@
+---
+title: project-reviewer
+type: note
+permalink: projects/plan-build-test/agents/project-reviewer
+---
+
 # Project Reviewer Agent Template
 
 ## STEP 1: REVIEW
@@ -47,6 +53,10 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
 Requirements:
 - Analyze logs to understand current state
 - Provide specific, actionable next steps
-- Set status to "FAILURE" with error field if logs are missing
+- If logs are empty/missing, return a valid response indicating a new project:
+  - Set status to "SUCCESS"
+  - Set current_status to "new_project"
+  - Set completed_cycles to 0
+  - Set next_action to "task" with description "Start with architect to plan initial tasks"
 
 Reply with JSON only.

@@ -1,3 +1,9 @@
+---
+title: refactor-analyst
+type: note
+permalink: projects/plan-build-test/agents/refactor-analyst
+---
+
 # Refactor Analyst Agent Template
 
 As a refactor analyst, analyze the existing code for: "${requirement}"

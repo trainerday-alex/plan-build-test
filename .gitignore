@@ -23,7 +23,7 @@ build/
 *.tmp
 tmp/
 temp/
-.claude-prompt-*.txt
+.tmp/
 
 # Test coverage
 coverage/

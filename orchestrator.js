@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, appendFileSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, appendFileSync, statSync, unlinkSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import { join, dirname } from 'path';
@@ -12,11 +12,10 @@ dotenv.config();
 const execAsync = promisify(exec);
 const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const AGENTS_PATH = process.env.AGENTS_PATH || join(process.cwd(), 'agents');
-const TEMPLATES_DIR = AGENTS_PATH;
+const TEMPLATES_DIR = join(process.cwd(), 'agents');
 
 // Load template from file
-function loadTemplate(templateName) {
+export function loadTemplate(templateName) {
   const templatePath = join(TEMPLATES_DIR, `${templateName}.md`);
   try {
     let content = readFileSync(templatePath, 'utf8');
@@ -45,7 +44,7 @@ function loadTemplate(templateName) {
 
 
 // Enhanced prompts for task-based approach
-const PROMPTS = {
+export const PROMPTS = {
   reviewProject: (projectName, log, requirement, taskLog) => {
     const template = loadTemplate('project-reviewer');
     if (template) {
@@ -206,12 +205,11 @@ Reply with plain text only.`;
 };
 
 // Project state management
-class ProjectState {
+export class ProjectState {
   constructor(projectPath) {
     this.projectPath = projectPath;
     this.planBuildTestDir = join(projectPath, 'plan-build-test');
     this.logFile = join(this.planBuildTestDir, 'logs.json');
-    this.stateFile = join(this.planBuildTestDir, 'orchestrator-state.json');
     this.textLogFile = join(this.planBuildTestDir, 'log.txt');
     this.taskLogFile = join(this.planBuildTestDir, 'task-log.txt');
     this.currentTaskNumber = 0;
@@ -220,98 +218,80 @@ class ProjectState {
     if (!existsSync(this.planBuildTestDir)) {
       mkdirSync(this.planBuildTestDir, { recursive: true });
     }
+    
+    // Initialize task counter from existing logs
+    if (existsSync(this.logFile)) {
+      try {
+        const log = JSON.parse(readFileSync(this.logFile, 'utf8'));
+        // Find the highest task number from CREATE_TASK entries only
+        const createTaskEntries = log.filter(e => e.action === 'CREATE_TASK' && e.taskNumber);
+        if (createTaskEntries.length > 0) {
+          const maxTaskNumber = Math.max(...createTaskEntries.map(e => e.taskNumber));
+          this.currentTaskNumber = maxTaskNumber;
+          console.log(`[DEBUG] Loaded task counter: ${this.currentTaskNumber} from ${this.logFile}`);
+        }
+      } catch (e) {
+        // If log file is corrupted, start fresh
+        console.log(`[DEBUG] Log file error, starting fresh: ${e.message}`);
+        this.currentTaskNumber = 0;
+      }
+    } else {
+      console.log(`[DEBUG] No log file exists at ${this.logFile}, starting at 0`);
+    }
   }
 
   exists() {
-    return existsSync(this.projectPath) && existsSync(this.stateFile);
+    return existsSync(this.projectPath) && existsSync(this.planBuildTestDir);
   }
 
-  loadState() {
-    if (existsSync(this.stateFile)) {
-      return JSON.parse(readFileSync(this.stateFile, 'utf8'));
-    }
-    return null;
-  }
-
-  saveState(state) {
-    ensureDir(this.stateFile);
-    writeFileSync(this.stateFile, JSON.stringify(state, null, 2));
-  }
-  
-  // Load state for a specific requirement
-  loadRequirementState(requirement) {
-    const fullState = this.loadState();
-    if (!fullState) return null;
+  // Get all requirements from logs
+  getAllRequirements() {
+    if (!existsSync(this.logFile)) return [];
     
-    // If old format (single task list), return null to start fresh
-    if (fullState.tasks && !fullState.requirements) {
-      return null;
-    }
-    
-    // New format: tasks grouped by requirement
-    return fullState.requirements?.[requirement] || null;
-  }
-  
-  // Get the most recent project state across all requirements
-  getMostRecentState() {
-    const fullState = this.loadState();
-    if (!fullState) return null;
-    
-    // Old format
-    if (fullState.tasks && !fullState.requirements) {
-      return fullState;
-    }
-    
-    // New format: find the most recently updated requirement
-    let mostRecent = null;
-    let latestTime = 0;
-    
-    for (const [req, state] of Object.entries(fullState.requirements || {})) {
-      // Prefer completed states or those with most progress
-      const progress = state.completedTasks?.length || 0;
-      const total = state.tasks?.length || 0;
-      const score = progress * 1000 + total; // Prioritize progress
+    try {
+      const log = JSON.parse(readFileSync(this.logFile, 'utf8'));
+      const requirements = new Set();
       
-      if (score > latestTime) {
-        latestTime = score;
-        mostRecent = state;
-      }
+      // Find all unique requirements from CREATE_TASK entries
+      log.forEach(entry => {
+        if (entry.action === 'CREATE_TASK' && entry.requirement) {
+          requirements.add(entry.requirement);
+        }
+      });
+      
+      return Array.from(requirements);
+    } catch (e) {
+      return [];
     }
-    
-    return mostRecent;
   }
   
-  // Save state for a specific requirement
-  saveRequirementState(requirement, requirementState) {
-    let fullState = this.loadState() || {};
+  // Get tasks for a specific requirement from logs
+  getRequirementTasks(requirement) {
+    if (!existsSync(this.logFile)) return [];
     
-    // Migrate from old format if needed
-    if (fullState.tasks && !fullState.requirements) {
-      fullState = {
-        requirements: {
-          [fullState.requirement || 'initial']: {
-            tasks: fullState.tasks,
-            completedTasks: fullState.completedTasks,
-            status: fullState.status,
-            lastTaskIndex: fullState.lastTaskIndex
-          }
-        },
-        currentRequirement: requirement,
-        projectName: fullState.projectName,
-        projectPath: fullState.projectPath
-      };
+    try {
+      const log = JSON.parse(readFileSync(this.logFile, 'utf8'));
+      const tasks = [];
+      const taskMap = new Map();
+      
+      // Build task list from logs
+      log.forEach(entry => {
+        if (entry.action === 'CREATE_TASK' && entry.requirement === requirement) {
+          taskMap.set(entry.taskNumber, {
+            number: entry.taskNumber,
+            description: entry.description,
+            status: 'pending',
+            requirement: requirement
+          });
+        } else if (entry.action === 'COMPLETE_TASK' && taskMap.has(entry.taskNumber)) {
+          taskMap.get(entry.taskNumber).status = 'completed';
+        }
+      });
+      
+      return Array.from(taskMap.values()).sort((a, b) => a.number - b.number);
+    } catch (e) {
+      return [];
     }
-    
-    // Initialize requirements object if needed
-    if (!fullState.requirements) {
-      fullState.requirements = {};
-    }
-    
-    // Save the requirement state
-    fullState.requirements[requirement] = requirementState;
-    fullState.currentRequirement = requirement;
-    
-    this.saveState(fullState);
   }
 
   getNextTaskNumber() {
@@ -322,16 +302,35 @@ class ProjectState {
   getCurrentTaskNumber() {
     return this.currentTaskNumber;
   }
+  
+  // Sync task counter with the highest task number in logs
+  syncTaskCounter() {
+    if (existsSync(this.logFile)) {
+      try {
+        const log = JSON.parse(readFileSync(this.logFile, 'utf8'));
+        const createTaskEntries = log.filter(e => e.action === 'CREATE_TASK' && e.taskNumber);
+        if (createTaskEntries.length > 0) {
+          const maxTaskNumber = Math.max(...createTaskEntries.map(e => e.taskNumber));
+          this.currentTaskNumber = maxTaskNumber;
+          console.log(`[DEBUG] Synced task counter to: ${this.currentTaskNumber}`);
+        } else {
+          this.currentTaskNumber = 0;
+          console.log(`[DEBUG] No CREATE_TASK entries found, reset counter to 0`);
+        }
+      } catch (e) {
+        this.currentTaskNumber = 0;
+        console.log(`[DEBUG] Error syncing task counter, reset to 0: ${e.message}`);
+      }
+    } else {
+      this.currentTaskNumber = 0;
+      console.log(`[DEBUG] No log file, task counter at 0`);
+    }
+  }
 
   appendLog(entry) {
     let log = [];
     if (existsSync(this.logFile)) {
       log = JSON.parse(readFileSync(this.logFile, 'utf8'));
-      // Update task number from existing logs
-      const lastTaskEntry = [...log].reverse().find(e => e.taskNumber);
-      if (lastTaskEntry) {
-        this.currentTaskNumber = lastTaskEntry.taskNumber;
-      }
     }
     
     log.push({
@@ -386,21 +385,44 @@ class ProjectState {
 }
 
 // Create directory if it doesn't exist
-function ensureDir(filePath) {
+export function ensureDir(filePath) {
   const dir = dirname(filePath);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
 }
 
-async function callClaude(prompt, role, projectState = null) {
+export async function callClaude(prompt, role, projectState = null) {
   console.log(`  → Calling ${role}...`);
   if (projectState) {
     projectState.appendTextLog(`Calling ${role}...`);
     projectState.appendTextLog(`Prompt: ${prompt.substring(0, 500)}...`, false);
   }
   
-  const tmpFile = join(process.cwd(), `.claude-prompt-${Date.now()}.txt`);
+  // Ensure .tmp directory exists
+  const tmpDir = join(process.cwd(), '.tmp');
+  if (!existsSync(tmpDir)) {
+    mkdirSync(tmpDir, { recursive: true });
+  }
+  
+  // Clean up old temp files (older than 1 hour)
+  try {
+    const files = readdirSync(tmpDir);
+    const oneHourAgo = Date.now() - (60 * 60 * 1000);
+    files.forEach(file => {
+      if (file.startsWith('.claude-prompt-') && file.endsWith('.txt')) {
+        const filePath = join(tmpDir, file);
+        const stats = statSync(filePath);
+        if (stats.mtimeMs < oneHourAgo) {
+          unlinkSync(filePath);
+        }
+      }
+    });
+  } catch (e) {
+    // Ignore cleanup errors
+  }
+  
+  const tmpFile = join(tmpDir, `.claude-prompt-${Date.now()}.txt`);
   
   try {
     writeFileSync(tmpFile, prompt);
@@ -445,7 +467,7 @@ async function callClaude(prompt, role, projectState = null) {
 }
 
 // Parse JSON response with fallback to text parsing
-function parseAgentResponse(response, agentType) {
+export function parseAgentResponse(response, agentType) {
   // Try to extract JSON from the response
   const jsonMatch = response.match(/```json\s*\n([\s\S]*?)\n\s*```/);
   if (jsonMatch) {
@@ -475,7 +497,7 @@ function parseAgentResponse(response, agentType) {
 }
 
 // Extract tasks from architect response
-function parseTasks(architectResponse) {
+export function parseTasks(architectResponse) {
   // Try JSON parsing first
   const json = parseAgentResponse(architectResponse, 'Architect');
   if (json && json.tasks) {
@@ -516,7 +538,7 @@ function parseTasks(architectResponse) {
 }
 
 // Extract file content from coder responses
-function parseFileContent(response) {
+export function parseFileContent(response) {
   // Try JSON parsing first
   const json = parseAgentResponse(response, 'Coder');
   if (json && json.files) {
@@ -567,7 +589,7 @@ function parseFileContent(response) {
 }
 
 // Get list of all project files
-function getAllProjectFiles(projectPath) {
+export function getAllProjectFiles(projectPath) {
   const files = [];
   
   function scanDir(dir, prefix = '') {
@@ -587,12 +609,49 @@ function getAllProjectFiles(projectPath) {
   return files;
 }
 
-export async function runOrchestrator(projectName, requirement) {
+// Clean up old temporary files
+export function cleanupTempFiles() {
+  const tmpDir = join(process.cwd(), '.tmp');
+  
+  // Ensure .tmp directory exists
+  if (!existsSync(tmpDir)) {
+    mkdirSync(tmpDir, { recursive: true });
+    return;
+  }
+  
+  try {
+    const files = readdirSync(tmpDir);
+    let cleaned = 0;
+    
+    files.forEach(file => {
+      if (file.startsWith('.claude-prompt-') && file.endsWith('.txt')) {
+        const filePath = join(tmpDir, file);
+        try {
+          unlinkSync(filePath);
+          cleaned++;
+        } catch (e) {
+          // Ignore individual file errors
+        }
+      }
+    });
+    
+    if (cleaned > 0) {
+      console.log(`🧹 Cleaned up ${cleaned} temporary files`);
+    }
+  } catch (e) {
+    // Ignore cleanup errors
+  }
+}
+
+export async function runOrchestrator(projectName, requirement, commandType = 'create-project') {
   if (!projectName || !requirement) {
     console.error('❌ Error: Both project name and requirement are required');
     console.error('Usage: node orchestrator.js "<project-name>" "<requirement>"');
     process.exit(1);
   }
+
+  // Clean up temp files at the start of each run
+  cleanupTempFiles();
 
   const projectPath = join(PROJECTS_DIR, projectName);
   const projectState = new ProjectState(projectPath);
@@ -609,6 +668,7 @@ export async function runOrchestrator(projectName, requirement) {
   projectState.appendTextLog(`ORCHESTRATOR SESSION STARTED`);
   projectState.appendTextLog(`Project: ${projectName}`);
   projectState.appendTextLog(`Requirement: ${requirement}`);
+  projectState.appendTextLog(`Command: ${commandType}`);
   projectState.appendTextLog(`Location: ${projectPath}`);
   projectState.appendTextLog(`${'='.repeat(80)}\n`);
   
@@ -634,24 +694,14 @@ export async function runOrchestrator(projectName, requirement) {
         console.log('♻️  Refactor requested - starting fresh task list\n');
         // state stays as initialized above (empty)
       } else {
-        // Load existing state for this specific requirement
-        const existingRequirementState = projectState.loadRequirementState(requirement);
+        // Load existing tasks from logs for this requirement
+        const existingTasks = projectState.getRequirementTasks(requirement);
         
-        // For fix command, always show the most recent state
-        if (requirement.includes('Fix failing tests')) {
-          const recentState = projectState.getMostRecentState();
-          if (recentState) {
-            console.log(`📋 Fix command: loading most recent project state`);
-            state = { ...state, ...recentState };
-          } else if (existingRequirementState) {
-            console.log(`📋 Found existing fix tasks`);
-            state = { ...state, ...existingRequirementState };
-          } else {
-            console.log(`📋 New requirement: "${requirement}" - starting fresh`);
-          }
-        } else if (existingRequirementState) {
-          console.log(`📋 Found existing tasks for: "${requirement}"`);
-          state = { ...state, ...existingRequirementState };
+        if (existingTasks.length > 0) {
+          console.log(`📋 Found ${existingTasks.length} existing tasks for: "${requirement}"`);
+          state.tasks = existingTasks;
+          state.completedTasks = existingTasks.filter(t => t.status === 'completed');
+          state.lastTaskIndex = existingTasks.length - 1;
         } else {
           console.log(`📋 New requirement: "${requirement}" - starting fresh`);
           // state stays as initialized above (empty)
@@ -724,7 +774,7 @@ export async function runOrchestrator(projectName, requirement) {
         });
         
         // Save updated state
-        projectState.saveRequirementState(requirement, state);
+        // State is now tracked in logs, no need to save separately
         
         // Skip to task execution
       } else {
@@ -741,24 +791,26 @@ export async function runOrchestrator(projectName, requirement) {
           console.log(`📊 Current Status: No tasks found yet`);
         }
         
-        // Get log summaries for regular review
-        const logSummary = projectState.getLogSummary();
-        let taskLogContent = '';
-        try {
-          if (existsSync(projectState.taskLogFile)) {
-            taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
-          }
-        } catch {}
-        
-        // Ask Claude to review and determine next steps
-        try {
-          projectState.appendTextLog(`\nReviewing existing project...`);
-          projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
-          reviewResult = await callClaude(
-          PROMPTS.reviewProject(projectName, logSummary, requirement, taskLogContent),
-          'Project Reviewer',
-          projectState
-        );
+        // Only run Project Reviewer if there are existing tasks
+        if (state.tasks.length > 0) {
+          // Get log summaries for regular review
+          const logSummary = projectState.getLogSummary();
+          let taskLogContent = '';
+          try {
+            if (existsSync(projectState.taskLogFile)) {
+              taskLogContent = readFileSync(projectState.taskLogFile, 'utf8');
+            }
+          } catch {}
+          
+          // Ask Claude to review and determine next steps
+          try {
+            projectState.appendTextLog(`\nReviewing existing project...`);
+            projectState.appendTaskLog('PLAN/REVIEW', 'Starting review of project state');
+            reviewResult = await callClaude(
+            PROMPTS.reviewProject(projectName, logSummary, requirement, taskLogContent),
+            'Project Reviewer',
+            projectState
+          );
         
         // Parse review JSON if available
         const reviewJson = parseAgentResponse(reviewResult, 'Project Reviewer');
@@ -811,10 +863,15 @@ export async function runOrchestrator(projectName, requirement) {
         }
         console.log('');
       }
+      } else {
+        // No existing tasks - need to go to Architect
+        reviewResult = 'Need to start from beginning with architect.';
+        console.log('📊 No existing tasks - will start with Architect');
+      }
       } // Close the else block for non-refactor review
       
       // Check if we just need to run tests (but not if it's a refactor request)
-      if (!isRefactor && (reviewResult.toLowerCase().includes('run tests') || 
+      if (!isRefactor && reviewResult && (reviewResult.toLowerCase().includes('run tests') || 
           reviewResult.toLowerCase().includes('everything') || 
           state.status === 'completed')) {
         console.log('✅ Project is complete. Running tests...');
@@ -961,7 +1018,6 @@ Thumbs.db
 
 # Plan-Build-Test orchestration files
 plan-build-test/logs.json
-plan-build-test/orchestrator-state.json
 plan-build-test/log.txt
 plan-build-test/task-log.txt
 
@@ -1025,6 +1081,9 @@ build/
         projectState.appendTextLog(`   Test: ${task.test}`, false);
       });
       
+      // Sync task counter with logs before assigning new task numbers
+      projectState.syncTaskCounter();
+      
       // Assign task numbers to each task
       state.tasks.forEach((task, i) => {
         const taskNum = projectState.getNextTaskNumber();
@@ -1060,7 +1119,7 @@ build/
       });
       
       // Save initial state
-      projectState.saveRequirementState(requirement, state);
+      // State is now tracked in logs, no need to save separately
     }
     
     // Execute remaining tasks
@@ -1111,7 +1170,7 @@ build/
       // Update state
       state.completedTasks.push(task.description);
       state.lastTaskIndex = i;
-      projectState.saveRequirementState(requirement, state);
+      // State is now tracked in logs, no need to save separately
       
       projectState.appendLog({
         action: 'TASK_COMPLETE',
@@ -1334,7 +1393,7 @@ export default defineConfig({
   testDir: './plan-build-test/test',
   timeout: 30000,
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: 'http://localhost:3000/plan-build-test',
     headless: true,
   },
   webServer: {
@@ -1349,38 +1408,12 @@ export default defineConfig({
     console.log(`  ✓ Created: playwright.config.js`);
     projectState.appendTextLog(`  Created: playwright.config.js`);
     
-    // Create server if needed
-    if (requirement.toLowerCase().includes('web') || 
-        requirement.toLowerCase().includes('page') ||
-        requirement.toLowerCase().includes('site')) {
-      const serverCode = `const express = require('express');
-const path = require('path');
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// Serve static files from plan-build-test/public directory
-app.use(express.static(path.join(__dirname, 'plan-build-test', 'public')));
-
-// Default route
-app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'plan-build-test', 'public', 'index.html'));
-});
-
-app.listen(PORT, () => {
-  console.log(\`Server running at http://localhost:\${PORT}\`);
-});`;
-      
-      if (!existsSync(join(projectPath, 'server.js'))) {
-        writeFileSync(join(projectPath, 'server.js'), serverCode);
-        console.log(`  ✓ Created: server.js`);
-        projectState.appendTextLog(`  Created: server.js`);
-      }
-    }
+    // Don't create a generic server - let the Coder create it based on the specific requirements
+    // The Coder agent knows whether it's a static site, EJS app, API, etc.
     
     // Update final state
     state.status = 'completed';
-    projectState.saveRequirementState(requirement, state);
+    // State is now tracked in logs, no need to save separately
     
     projectState.appendLog({
       action: 'PROJECT_COMPLETE',
@@ -1527,7 +1560,7 @@ app.listen(PORT, () => {
   } catch (error) {
     state.status = 'error';
     state.error = error.message;
-    projectState.saveRequirementState(requirement, state);
+    // State is now tracked in logs, no need to save separately
     
     projectState.appendTextLog(`\n${'='.repeat(80)}`);
     projectState.appendTextLog(`CRITICAL ERROR: ${error.message}`);

@@ -1,3 +1,9 @@
+---
+title: architect
+type: note
+permalink: projects/plan-build-test/agents/architect
+---
+
 # Architect Agent Template
 
 As a software architect, create a task-based blueprint for: "${requirement}".
@@ -23,18 +29,14 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
   ],
   "file_structure": [
     {
-      "path": "path/to/file.js",
-      "purpose": "What this file does",
-      "type": "backend|frontend|test|config"
+      "path": "src/index.js",
+      "purpose": "Main application entry point"
     }
   ],
   "final_validation": {
-    "description": "What the final test validates",
-    "test_file": "plan-build-test/test/e2e.test.js",
-    "key_assertions": [
-      "What should work",
-      "Error cases to check"
-    ]
+    "description": "End-to-end test description",
+    "test_type": "playwright",
+    "test_steps": ["Navigate to...", "Click on...", "Verify..."]
   }
 }
 ```
@@ -43,6 +45,22 @@ Requirements:
 - Tasks must be numbered and have clear test commands
 - Each task must be independently testable
 - Include all files needed for the project
+- IMPORTANT: The project template already includes:
+  - server.js with Express and /plan-build-test route
+  - package.json with all necessary scripts
+  - src/index.html, src/styles.css, src/script.js (basic placeholders)
+  - test/e2e.test.js (basic test structure)
+  - playwright.config.js
+- DO NOT create tasks for setting up the server or basic structure
+- Focus tasks on implementing the specific feature requirements
+- Each task that creates UI should update what's served at /plan-build-test
 - Set status to "FAILURE" with error field if anything is unclear
+
+File Structure Rules:
+- server.js and package.json go in project root (no prefix)
+- Source files go in src/ directory in project root
+- Test files go in test/ directory in project root
+- Use paths like "server.js", "src/index.html", "src/styles.css", "test/e2e.test.js"
+- The plan-build-test/ folder is ONLY for orchestrator logs - never put project files there
 
 Reply with JSON only.

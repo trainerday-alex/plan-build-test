@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runOrchestrator } from './orchestrator.js';
+import { runOrchestratorNew } from './orchestrator-new.js';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { exec } from 'child_process';
@@ -55,7 +55,8 @@ async function main() {
   const args = process.argv.slice(3);
 
   switch (command) {
-    case 'new-project':
+    case 'create-project':
+    case 'new-project': // Keep for backward compatibility
       if (args.length < 2) {
         console.error('Usage: npm run new-project <name> <description>');
         process.exit(1);
@@ -74,7 +75,7 @@ async function main() {
       setCurrentProject(projectName);
       
       console.log('Then: Plan → Build → Test cycle for first task\n');
-      await runOrchestrator(projectName, description);
+      await runOrchestratorNew(projectName, description, 'create-project');
       break;
 
     case 'task':
@@ -97,7 +98,7 @@ async function main() {
       await autoCommit(taskProjectPath, `Before task: ${taskDescription.substring(0, 50)}...`);
       
       console.log('\nRunning: Plan → Build → Test\n');
-      await runOrchestrator(currentProject, `Add new task: ${taskDescription}`);
+      await runOrchestratorNew(currentProject, `Add new task: ${taskDescription}`, 'task');
       break;
 
     case 'fix':
@@ -108,7 +109,7 @@ async function main() {
       }
       console.log(`\n🔧 Fixing issues in ${fixProject}...`);
       console.log('Running: Plan → Build → Test\n');
-      await runOrchestrator(fixProject, 'Fix failing tests and resolve issues');
+      await runOrchestratorNew(fixProject, 'Fix failing tests and resolve issues', 'fix');
       break;
 
     case 'refactor':
@@ -126,7 +127,7 @@ async function main() {
       await autoCommit(refactorProjectPath, 'Before refactor');
       
       console.log('\nRunning: Plan → Build → Test\n');
-      await runOrchestrator(refactorProject, 'Refactor and improve existing code');
+      await runOrchestratorNew(refactorProject, 'Refactor and improve existing code', 'refactor');
       break;
 
     case 'change-project':
@@ -144,6 +145,47 @@ async function main() {
       console.log(`✅ Switched to project: ${newProject}`);
       break;
 
+    case 'start-project':
+      const startProject = getCurrentProject();
+      if (!startProject) {
+        console.error('No active project. Use npm run new-project or npm run change-project first.');
+        process.exit(1);
+      }
+      
+      const startProjectPath = join(PROJECTS_DIR, startProject);
+      if (!existsSync(startProjectPath)) {
+        console.error(`Project "${startProject}" not found in ${PROJECTS_DIR}`);
+        process.exit(1);
+      }
+      
+      console.log(`\n🌐 Starting server for project: ${startProject}`);
+      console.log(`📁 Location: ${startProjectPath}`);
+      console.log(`🔗 URL: http://localhost:3000/plan-build-test\n`);
+      console.log('Press Ctrl+C to stop the server\n');
+      
+      try {
+        // Start server and keep process alive
+        const serverProcess = exec('npm start', {
+          cwd: startProjectPath,
+          stdio: 'inherit'
+        });
+        
+        // Handle process termination
+        process.on('SIGINT', () => {
+          console.log('\n🛑 Stopping server...');
+          serverProcess.kill();
+          process.exit(0);
+        });
+        
+        // Keep the process alive
+        await new Promise(() => {});
+        
+      } catch (error) {
+        console.error(`❌ Failed to start server: ${error.message}`);
+        process.exit(1);
+      }
+      break;
+
     case 'status':
       const statusProject = getCurrentProject();
       if (!statusProject) {
@@ -154,25 +196,55 @@ async function main() {
       console.log(`\n📊 Status for project: ${statusProject}\n`);
       
       const statusProjectPath = join(PROJECTS_DIR, statusProject);
-      const stateFile = join(statusProjectPath, 'orchestrator-state.json');
+      const logFile = join(statusProjectPath, 'plan-build-test', 'logs.json');
       
-      if (!existsSync(stateFile)) {
-        console.log('No state file found. Project may be new or not initialized.');
+      if (!existsSync(logFile)) {
+        console.log('No log file found. Project may be new or not initialized.');
         process.exit(0);
       }
       
       try {
-        const state = JSON.parse(readFileSync(stateFile, 'utf8'));
+        const logs = JSON.parse(readFileSync(logFile, 'utf8'));
         
-        console.log(`Status: ${state.status || 'unknown'}`);
-        console.log(`Progress: ${state.completedTasks.length}/${state.tasks.length} tasks completed\n`);
+        // Extract tasks and completion status from logs
+        const taskMap = new Map();
+        const requirements = new Set();
         
-        if (state.tasks && state.tasks.length > 0) {
+        logs.forEach(entry => {
+          if (entry.action === 'CREATE_TASK') {
+            taskMap.set(entry.taskNumber, {
+              number: entry.taskNumber,
+              description: entry.description,
+              status: 'pending',
+              requirement: entry.requirement
+            });
+            if (entry.requirement) requirements.add(entry.requirement);
+          } else if (entry.action === 'COMPLETE_TASK' && taskMap.has(entry.taskNumber)) {
+            taskMap.get(entry.taskNumber).status = 'completed';
+          }
+        });
+        
+        const tasks = Array.from(taskMap.values()).sort((a, b) => a.number - b.number);
+        const completedTasks = tasks.filter(t => t.status === 'completed');
+        
+        console.log(`Status: ${completedTasks.length === tasks.length ? 'completed' : 'in progress'}`);
+        console.log(`Progress: ${completedTasks.length}/${tasks.length} tasks completed\n`);
+        
+        if (requirements.size > 0) {
+          console.log(`Requirements (${requirements.size}):`);
+          requirements.forEach(req => {
+            const reqTasks = tasks.filter(t => t.requirement === req);
+            const reqCompleted = reqTasks.filter(t => t.status === 'completed');
+            console.log(`  • ${req} (${reqCompleted.length}/${reqTasks.length} completed)`);
+          });
+          console.log('');
+        }
+        
+        if (tasks.length > 0) {
           console.log('Tasks:');
-          state.tasks.forEach((task, i) => {
-            const isCompleted = state.completedTasks.includes(task.description);
-            const status = isCompleted ? '✅' : '⬜';
-            console.log(`${status} ${i + 1}. ${task.description}`);
+          tasks.forEach(task => {
+            const status = task.status === 'completed' ? '✅' : '⬜';
+            console.log(`  ${status} ${task.number}. ${task.description}`);
           });
         }
         
@@ -194,7 +266,7 @@ async function main() {
       break;
 
     default:
-      console.error('Unknown command. Use: new-project, task, fix, refactor, change-project, or status');
+      console.error('Unknown command. Use: create-project, task, fix, refactor, change-project, status, or start-project');
       process.exit(1);
   }
 }
