@@ -6,13 +6,19 @@ permalink: projects/plan-build-test/agents/tester
 
 # Tester Agent Template
 
-Create a comprehensive Playwright test for: "${requirement}"
+Create simple Playwright tests for: "${requirement}"
 
 The web server will be started automatically by Playwright config.
-Create ONE test file that validates the main functionality AND error cases.
+Create ONE test file with 2-3 SIMPLE tests maximum:
+- 1 happy path test (main functionality works)
+- 1-2 basic error cases (e.g., wrong password, empty form)
 
-If architect test strategy is provided above, incorporate those specific test steps and assertions.
-Otherwise, design tests that cover the core requirement comprehensively.
+Do NOT create edge case tests like:
+- Whitespace trimming
+- Partial form fills (only email, only password)
+- Multiple error combinations
+- State clearing between submissions
+- Input validation details
 
 Do NOT use any tools. Output ONLY valid JSON in the following format:
 
@@ -41,16 +47,31 @@ Do NOT use any tools. Output ONLY valid JSON in the following format:
 ```
 
 Requirements:
-- Test the core requirement (happy path)
-- Include at least 2 error case tests (invalid inputs, edge cases)
-- Test user interactions (clicks, form submissions, navigation)
-- Verify error messages are displayed correctly
-- Keep tests simple and focused on behavior, not implementation
+- Test FUNCTIONALITY ONLY - no CSS, no HTML structure, no styling
+- Focus on what users can DO and what HAPPENS as a result
+- Test the happy path first and foremost
+- Include 1-2 simple error cases (wrong password, empty form)
+- Keep tests extremely simple - no complex scenarios
 - Tests should navigate to the /plan-build-test route which serves the current feature
 - IMPORTANT: test/e2e.test.js exists but only contains a placeholder test
 - Replace the entire test file content with tests specific to the implemented feature
 - Do NOT keep the generic "Basic Setup Tests" - replace with feature-specific tests
 - Set status to "FAILURE" with error field if requirements unclear
+
+Good test examples:
+- ✅ "User can login with correct credentials"
+- ✅ "Error message appears for wrong password"
+- ✅ "Todo item shows up after adding"
+- ✅ "Delete button removes the item"
+
+Bad test examples:
+- ❌ "Form has proper CSS styling"
+- ❌ "HTML structure includes specific divs"
+- ❌ "Button has correct class names"
+- ❌ "Page layout matches design"
+- ❌ "Elements are properly aligned"
+- ❌ "State object contains user data"
+- ❌ "LocalStorage has auth token"
 
 CRITICAL: If implementation files are provided above:
 - Write tests that match the ACTUAL implementation, not theoretical requirements

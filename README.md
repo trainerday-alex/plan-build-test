@@ -34,12 +34,17 @@ cp .env.example .env
 
 # 4. Create your first project
 npm run create-project my-app "build a todo list with add and delete"
+# This creates the project and shows a list of backlogs (feature sets)
 
-# 5. Add features (works on current project)
-npm run task "add ability to edit todos"
+# 5. Process backlogs to build features
+npm run process-backlog      # Works on the next available backlog
+npm run list-backlogs        # See all backlogs and their status
 
-# 6. Fix issues or improve code
-npm run fix                   # Fix failing tests (I work directly with Claude Code on this part)
+# 6. Add more backlogs as needed
+npm run backlog "add user authentication"
+
+# 7. Fix issues or improve code
+npm run fix                   # Fix failing tests
 npm run refactor             # Improve code quality
 ```
 
@@ -70,15 +75,23 @@ npm run create-project <name> <description>
 ```
 Creates a new project and sets it as current. Includes:
 - Project folder with git init
+- List of backlogs (feature sets) to implement
 - All necessary files and dependencies
-- First working implementation
+
+### Work with Backlogs
+```bash
+npm run list-backlogs         # See all backlogs and their status
+npm run process-backlog       # Work on the next available backlog
+npm run process-backlog 3     # Work on specific backlog #3
+npm run backlog <description> # Add a new backlog item
+```
 
 ### Work on Current Project
 ```bash
-npm run task <description>    # Add new feature
 npm run fix                   # Fix failing tests
 npm run refactor             # Improve code quality
 npm run status               # Show project progress
+npm run task <description>    # Legacy: Add feature directly (use backlogs instead)
 ```
 
 ### Switch Projects
@@ -93,6 +106,7 @@ Each project includes:
 - Web server (when needed)
 - Automated tests
 - Git repository with automatic commits
+- `backlogs.json` - List of feature sets to implement
 - Comprehensive logs:
   - `log.txt` - Detailed execution log
   - `task-log.txt` - High-level Plan/Build/Test cycles
@@ -110,13 +124,20 @@ This creates a clean git history showing your project evolution.
 ## Example Workflow
 
 ```bash
-# Day 1: Create a login page
-npm run create-project login-app "build a login page"
-# (builds and tests automatically, server starts for manual testing)
+# Day 1: Create a project with authentication
+npm run create-project auth-app "build user authentication system"
+# Shows backlogs like: 1. User Registration, 2. Login, 3. Password Reset
 
-# Day 2: Add password reset
-npm run task "add forgot password link and reset flow"
-# (reviews current state, plans, builds, tests)
+# Start with the first backlog
+npm run process-backlog
+# (builds user registration feature)
+
+# Add more requirements as you discover them
+npm run backlog "add email verification"
+
+# Day 2: Continue with next backlog
+npm run process-backlog
+# (builds login feature)
 
 # Something broke?
 npm run fix

@@ -19,6 +19,12 @@ ${implementationFiles}
 
 Analyze the test failures and update the tests to match what the implementation actually does. Do NOT change the implementation - only fix the tests.
 
+IMPORTANT: While fixing tests, also SIMPLIFY them:
+- Reduce to 2-3 core functionality tests maximum
+- Remove edge case tests (whitespace trimming, partial form fills, etc.)
+- Keep only: happy path + 1-2 basic error cases
+- Delete tests that check implementation details or minor behaviors
+
 CRITICAL Analysis Steps:
 1. Identify WHY each test is failing
 2. Check if HTML5 validation is preventing form submission (e.g., type="email" with invalid email)

@@ -78,9 +78,9 @@ async function main() {
       await runOrchestratorNew(projectName, description, 'create-project');
       break;
 
-    case 'task':
+    case 'backlog':
       if (args.length < 1) {
-        console.error('Usage: npm run task <task-description>');
+        console.error('Usage: npm run backlog <backlog-description>');
         process.exit(1);
       }
       const currentProject = getCurrentProject();
@@ -88,17 +88,84 @@ async function main() {
         console.error('No active project. Use npm run new-project or npm run change-project first.');
         process.exit(1);
       }
-      const taskDescription = args.join(' ');
-      const taskProjectPath = join(PROJECTS_DIR, currentProject);
+      const backlogDescription = args.join(' ');
+      const backlogProjectPath = join(PROJECTS_DIR, currentProject);
       
-      console.log(`\n📌 Adding new task to ${currentProject}...`);
+      console.log(`\n📋 Adding new backlog item to ${currentProject}...`);
       
-      // Commit current state before starting new task
+      // Commit current state before starting new backlog
       console.log('\n📦 Committing current state...');
-      await autoCommit(taskProjectPath, `Before task: ${taskDescription.substring(0, 50)}...`);
+      await autoCommit(backlogProjectPath, `Before backlog: ${backlogDescription.substring(0, 50)}...`);
       
-      console.log('\nRunning: Plan → Build → Test\n');
-      await runOrchestratorNew(currentProject, `Add new task: ${taskDescription}`, 'task');
+      console.log('\nAdding backlog item...\n');
+      await runOrchestratorNew(currentProject, `Add backlog: ${backlogDescription}`, 'add-backlog');
+      break;
+
+    case 'process-backlog':
+      const processProject = getCurrentProject();
+      if (!processProject) {
+        console.error('No active project. Use npm run new-project or npm run change-project first.');
+        process.exit(1);
+      }
+      const backlogId = args[0];
+      if (!backlogId) {
+        console.log('\n📋 Processing next backlog item...');
+        await runOrchestratorNew(processProject, 'Process next backlog item', 'process-backlog');
+      } else {
+        console.log(`\n📋 Processing backlog item #${backlogId}...`);
+        await runOrchestratorNew(processProject, `Process backlog item #${backlogId}`, 'process-backlog', { backlogId });
+      }
+      break;
+
+    case 'list-backlogs':
+    case 'show-backlogs':
+      const listProject = getCurrentProject();
+      if (!listProject) {
+        console.error('No active project. Use npm run new-project or npm run change-project first.');
+        process.exit(1);
+      }
+      console.log(`\n📋 Listing backlogs for ${listProject}...`);
+      await runOrchestratorNew(listProject, 'List backlogs', 'list-backlogs');
+      break;
+
+    case 'reset-backlog':
+      const resetProject = getCurrentProject();
+      if (!resetProject) {
+        console.error('No active project. Use npm run new-project or npm run change-project first.');
+        process.exit(1);
+      }
+      const backlogIdToReset = args[0];
+      if (!backlogIdToReset) {
+        console.error('Usage: npm run reset-backlog <id>');
+        process.exit(1);
+      }
+      console.log(`\n🔄 Resetting backlog #${backlogIdToReset} to pending status...`);
+      await runOrchestratorNew(resetProject, `Reset backlog #${backlogIdToReset}`, 'reset-backlog', { backlogId: backlogIdToReset });
+      break;
+
+    case 'help':
+      console.log('\n📚 Plan-Build-Test Orchestrator Commands\n');
+      console.log('Project Management:');
+      console.log('  npm run create-project <name> <description>  - Create new project with backlogs');
+      console.log('  npm run change-project <name>                - Switch to existing project');
+      console.log('  npm run status                               - Show current project status');
+      console.log('  npm run start-project                        - Start the web server\n');
+      
+      console.log('Backlog Management:');
+      console.log('  npm run show-backlogs                        - List all backlogs with status');
+      console.log('  npm run process-backlog [id]                 - Work on next (or specific) backlog');
+      console.log('  npm run backlog <description>                - Add new backlog item');
+      console.log('  npm run reset-backlog <id>                   - Reset stuck backlog to pending\n');
+      
+      console.log('Development:');
+      console.log('  npm run fix                                  - Fix failing tests');
+      console.log('  npm run fix-tests                            - Update tests to match implementation');
+      console.log('  npm run refactor                             - Improve code quality\n');
+      
+      console.log('Legend:');
+      console.log('  ✅ Completed backlog');
+      console.log('  ⬜ Pending backlog');
+      console.log('  🔄 In progress\n');
       break;
 
     case 'fix':
@@ -277,7 +344,7 @@ async function main() {
       break;
 
     default:
-      console.error('Unknown command. Use: create-project, task, fix, refactor, change-project, status, fix-tests, or start-project');
+      console.error('Unknown command. Run "npm run help" to see all available commands.');
       process.exit(1);
   }
 }

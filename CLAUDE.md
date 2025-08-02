@@ -17,8 +17,11 @@ npm test
 
 ### Project Management Commands
 ```bash
-npm run create-project <name> <description>  # Create a new project
-npm run task <description>                 # Add new feature to current project
+npm run create-project <name> <description>  # Create a new project with backlogs
+npm run backlog <description>             # Add new backlog item to current project
+npm run process-backlog [id]              # Process next backlog (or specific id)
+npm run list-backlogs                     # List all backlogs for current project
+npm run task <description>                # Legacy: Add new feature directly (use backlogs instead)
 npm run fix                               # Fix failing tests in current project
 npm run fix-tests                         # Read logs and fix tests to match implementation
 npm run refactor                          # Improve code quality in current project
@@ -55,9 +58,29 @@ Every action follows these steps:
 
 Projects are created in `PROJECTS_DIR` (configurable via .env) with:
 - Git repository with automatic commits
+- `backlogs.json` - List of project backlogs (feature sets to build)
 - `log.txt` - Detailed execution log
 - `task-log.txt` - High-level Plan/Build/Test cycles
 - Generated application code and tests
+
+### Backlog System
+
+The orchestrator now uses a three-level hierarchy:
+1. **Project** - The overall application being built
+2. **Backlogs** - Feature sets or major components (stored in backlogs.json)
+3. **Tasks** - Individual implementation steps within a backlog
+
+When creating a new project:
+- `npm run create-project` creates the project and generates initial backlogs
+- `npm run process-backlog` works on the next available backlog
+- Each backlog is broken down into tasks during processing
+
+#### Backlog Sizing Guidelines
+- Each backlog should be a complete, demonstrable feature
+- Target: 300-1000 lines of code when implemented
+- Should take AI ~10-30 minutes to complete (1-3 hours human time)
+- Examples: "User Login System", "Product Search", "Shopping Cart"
+- Not: "Add button" (too small) or "Complete app" (too large)
 
 ### Key Implementation Details
 

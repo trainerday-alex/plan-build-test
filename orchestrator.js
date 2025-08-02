@@ -164,8 +164,13 @@ Reply with plain text only.`;
 
 The web server will be started automatically by Playwright config.
 
-Create ONE test file that validates the main functionality.
-Focus on the core requirement. Keep it simple.
+Test BASIC USER-FACING FUNCTIONALITY - what users can DO and SEE.
+NO implementation details or internal state checks.
+
+Examples of good tests:
+- User fills form and sees success message
+- Item appears in list after adding
+- Error shows for invalid input
 
 Do NOT use any tools. TEXT-ONLY response.
 
@@ -292,8 +297,9 @@ export class ProjectState {
       log.forEach(entry => {
         if (entry.action === 'CREATE_TASK' && entry.requirement === requirement) {
           taskMap.set(entry.taskNumber, {
-            number: entry.taskNumber,
+            taskNumber: entry.taskNumber,
             description: entry.description,
+            test: entry.testCommand || 'verify manually',
             status: 'pending',
             requirement: requirement
           });
@@ -302,7 +308,7 @@ export class ProjectState {
         }
       });
       
-      return Array.from(taskMap.values()).sort((a, b) => a.number - b.number);
+      return Array.from(taskMap.values()).sort((a, b) => a.taskNumber - b.taskNumber);
     } catch (e) {
       return [];
     }
@@ -698,7 +704,7 @@ export function cleanupTempFiles() {
 /**
  * Main orchestrator function with command-based flow
  */
-export async function runOrchestratorNew(projectName, requirement, commandType = 'create-project') {
+export async function runOrchestratorNew(projectName, requirement, commandType = 'create-project', options = {}) {
   if (!projectName || !requirement) {
     console.error('❌ Error: Both project name and requirement are required');
     process.exit(1);
@@ -739,7 +745,8 @@ export async function runOrchestratorNew(projectName, requirement, commandType =
     let state = {
       tasks: [],
       completedTasks: [],
-      status: 'started'
+      status: 'started',
+      ...options
     };
 
     // Execute based on command type
@@ -750,6 +757,22 @@ export async function runOrchestratorNew(projectName, requirement, commandType =
         
       case 'task':
         await executeAddTask(projectState, requirement, state);
+        break;
+        
+      case 'add-backlog':
+        await executeAddBacklog(projectState, requirement, state);
+        break;
+        
+      case 'process-backlog':
+        await executeProcessBacklog(projectState, requirement, state);
+        break;
+        
+      case 'list-backlogs':
+        await executeListBacklogs(projectState, requirement, state);
+        break;
+        
+      case 'reset-backlog':
+        await executeResetBacklog(projectState, requirement, state);
         break;
         
       case 'fix':
@@ -769,8 +792,8 @@ export async function runOrchestratorNew(projectName, requirement, commandType =
         process.exit(1);
     }
     
-    // Finish with testing unless we're analyzing test fixes
-    if (commandType !== 'fix-tests') {
+    // Finish with testing unless we're analyzing test fixes, managing backlogs, or creating a new project
+    if (!['fix-tests', 'list-backlogs', 'add-backlog', 'create-project', 'reset-backlog'].includes(commandType)) {
       await runTests(projectState, projectPath, requirement, state);
     }
     
@@ -793,11 +816,15 @@ async function executeCreateProject(projectState, requirement, state) {
   // Initialize git
   await initializeGit(projectState);
   
-  // Run Architect
-  await runArchitect(projectState, requirement, state);
+  // Run Architect to create backlogs
+  await runArchitectBacklogs(projectState, requirement, state);
   
-  // Run Coder for each task
-  await runCoderTasks(projectState, requirement, state);
+  // Don't run any tasks - just show the backlogs
+  console.log('\n✅ Project setup complete!');
+  console.log('\n📋 To start working on a backlog, use:');
+  console.log('   npm run process-backlog');
+  console.log('\n📋 To add more backlogs, use:');
+  console.log('   npm run backlog <description>');
 }
 
 /**
@@ -919,58 +946,60 @@ async function executeRefactor(projectState, requirement, state) {
  * Execute fix-tests command flow
  */
 async function executeFixTests(projectState, requirement, state) {
-  console.log('\n🔍 Analyzing test failures from logs...\n');
+  console.log('\n🔍 Running tests to check current status...\n');
   
-  // Read the most recent test output from logs
-  console.log('📋 Reading test output from logs...');
   let testOutput = '';
   
-  // Check the text log for recent test output
-  const logFile = join(projectState.projectPath, 'plan-build-test', 'log.txt');
-  if (existsSync(logFile)) {
-    const logContent = readFileSync(logFile, 'utf8');
-    
-    // Find the most recent test output in the log
-    const testOutputMatch = logContent.match(/Running tests[\s\S]*?(?=\n(?:✅|❌|💡|📝|🔧|📊|\[DEBUG\]|$))/g);
-    if (testOutputMatch && testOutputMatch.length > 0) {
-      // Get the last (most recent) test output
-      testOutput = testOutputMatch[testOutputMatch.length - 1];
-      console.log('  ✓ Found test output in logs');
-    }
+  // Always run tests to get current status
+  console.log('📋 Running tests...');
+  
+  // Run the tests
+  let testFailed = false;
+  try {
+    const { stdout, stderr } = await execAsync('npm test', { 
+      cwd: projectState.projectPath,
+      env: { ...process.env, CI: 'true' }
+    });
+    testOutput = stdout + '\n' + stderr;
+    console.log(testOutput); // Show the test output
+  } catch (error) {
+    // Tests failed, capture the output
+    testFailed = true;
+    testOutput = error.stdout + '\n' + error.stderr;
+    console.log(testOutput); // Show the test output
   }
   
-  // If no test output in logs, check if there's a test-results.txt or similar
-  if (!testOutput) {
-    const testResultsFile = join(projectState.projectPath, 'test-results.txt');
-    if (existsSync(testResultsFile)) {
-      testOutput = readFileSync(testResultsFile, 'utf8');
-      console.log('  ✓ Found test results file');
-    }
+  // Also append to log for future use
+  projectState.appendTextLog('\nRunning tests...\n' + testOutput);
+  
+  console.log('\n📊 Test analysis:\n');
+  
+  // Check if tests are passing
+  const testsArePassing = testOutput.includes(' passed (') && !testOutput.includes(' failed (');
+  
+  // If no test output detected, the test command might have issues
+  if (!testOutput || testOutput.trim().length === 0) {
+    console.log('❌ No test output detected. The test command may have failed to run.');
+    console.log('   Please check that tests can be run with: npm test\n');
+    return;
   }
   
-  if (!testOutput) {
-    console.log('  ⚠️  No test output found in logs');
-    console.log('\n📋 Running tests to get current output...');
+  if (testsArePassing) {
+    console.log('✅ All tests are passing! No fixes needed.\n');
     
-    // Playwright will handle killing and starting the server via webServer config
+    // Check if there are too many tests (more than 5)
+    const testCountMatch = testOutput.match(/(\d+) passed/);
+    const testCount = testCountMatch ? parseInt(testCountMatch[1]) : 0;
     
-    // Run the tests
-    try {
-      const { stdout, stderr } = await execAsync('npm test', { 
-        cwd: projectState.projectPath,
-        env: { ...process.env, CI: 'true' }
-      });
-      testOutput = stdout + '\n' + stderr;
-    } catch (error) {
-      // Tests failed, capture the output
-      testOutput = error.stdout + '\n' + error.stderr;
+    if (testCount > 5) {
+      console.log(`⚠️  Warning: You have ${testCount} tests. Consider simplifying to 2-3 core functionality tests.`);
+      console.log('   Tests should focus on main functionality, not edge cases.\n');
     }
     
-    // Also append to log for future use
-    projectState.appendTextLog('\nRunning tests...\n' + testOutput);
+    return;
   }
   
-  console.log('📊 Test output ready\n');
+  console.log('❌ Tests are failing. Analyzing failures...\n');
   
   // Get all test files from our standard test directory
   const testFiles = [];
@@ -1377,13 +1406,25 @@ async function runRefactorAnalyst(projectState, requirement, state) {
 async function runCoderTasks(projectState, requirement, state) {
   console.log('💻 Implementing tasks...\n');
   
-  // Check if we're resuming from a failed task
-  const lastIncompleteTask = projectState.getLastIncompleteTask();
-  const startIndex = lastIncompleteTask >= 0 ? lastIncompleteTask : 0;
+  // Find the first incomplete task based on status
+  let startIndex = 0;
+  for (let i = 0; i < state.tasks.length; i++) {
+    if (state.tasks[i].status === 'completed') {
+      startIndex = i + 1;
+    } else {
+      break;
+    }
+  }
+  
+  // If all tasks are complete, nothing to do
+  if (startIndex >= state.tasks.length) {
+    console.log('✅ All tasks already completed\n');
+    return;
+  }
   
   if (startIndex > 0) {
-    console.log(`📝 Resuming from task ${startIndex + 1}...\n`);
-    projectState.appendTextLog(`\nResuming from incomplete task ${startIndex + 1}`);
+    console.log(`📝 Resuming from task ${startIndex + 1} (${state.tasks.length - startIndex} remaining)...\n`);
+    projectState.appendTextLog(`\nResuming from task ${startIndex + 1}`);
   }
   
   for (let i = startIndex; i < state.tasks.length; i++) {
@@ -1525,10 +1566,7 @@ async function runTests(projectState, projectPath, requirement, state) {
   
   if (!existsSync(testFile) && state.tasks.length > 0) {
     console.log('🧪 Creating tests...');
-    console.log('📋 Test will verify:');
-    state.tasks.forEach((task, i) => {
-      console.log(`   ${i + 1}. ${task.description}`);
-    });
+    console.log('📋 Tests will verify functionality works correctly');
     console.log('');
     
     projectState.appendTextLog(`\nTester creating validation tests...`);
@@ -1663,6 +1701,316 @@ async function runTests(projectState, projectPath, requirement, state) {
     
     process.exit(1);
   }
+}
+
+/**
+ * Run Architect to create backlogs instead of tasks
+ */
+async function runArchitectBacklogs(projectState, requirement, state) {
+  console.log('🏗️  Architect creating project backlogs...');
+  projectState.appendTextLog(`\nArchitect creating backlogs...`);
+  projectState.appendTaskLog('PLAN', `Creating backlogs for: ${requirement}`);
+  
+  const architectResult = await callClaude(
+    loadTemplate('architect-backlogs').replace('${requirement}', requirement), 
+    'Architect', 
+    projectState
+  );
+  
+  // Parse backlogs
+  const architectPlan = parseAgentResponse(architectResult, 'Architect');
+  if (!architectPlan || architectPlan.status === 'FAILURE') {
+    throw new Error(architectPlan?.error || 'Architect failed to create backlogs');
+  }
+  
+  // Save backlogs to file
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  const backlogsData = {
+    project_summary: architectPlan.project_summary,
+    runtime_requirements: architectPlan.runtime_requirements,
+    technical_considerations: architectPlan.technical_considerations,
+    backlogs: architectPlan.backlogs.map((b, idx) => ({
+      ...b,
+      id: idx + 1,
+      status: 'pending',
+      created_at: new Date().toISOString()
+    }))
+  };
+  
+  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  console.log(`\n📋 Created ${backlogsData.backlogs.length} backlogs:\n`);
+  
+  // Display backlogs
+  backlogsData.backlogs.forEach(backlog => {
+    console.log(`   ${backlog.id}. ${backlog.title} [${backlog.priority}]`);
+    console.log(`      ${backlog.description}`);
+    console.log(`      Effort: ${backlog.estimated_effort}`);
+    if (backlog.dependencies.length > 0) {
+      console.log(`      Depends on: ${backlog.dependencies.join(', ')}`);
+    }
+    console.log('');
+  });
+  
+  projectState.appendLog({
+    action: 'BACKLOGS_CREATED',
+    details: `Created ${backlogsData.backlogs.length} backlogs`,
+    backlogs: backlogsData.backlogs
+  });
+}
+
+/**
+ * Execute add-backlog command
+ */
+async function executeAddBacklog(projectState, requirement, state) {
+  console.log('\n📋 Adding new backlog item...\n');
+  
+  // Load existing backlogs
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  let backlogsData = { backlogs: [] };
+  
+  if (existsSync(backlogsFile)) {
+    backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+  }
+  
+  // Extract the backlog description from requirement
+  const backlogDescription = requirement.replace(/^Add backlog:\s*/i, '');
+  
+  // Create simple backlog entry (could enhance with AI later)
+  const newBacklog = {
+    id: backlogsData.backlogs.length + 1,
+    title: backlogDescription.split(' ').slice(0, 4).join(' '),
+    description: backlogDescription,
+    priority: 'medium',
+    estimated_effort: 'medium',
+    dependencies: [],
+    acceptance_criteria: [],
+    status: 'pending',
+    created_at: new Date().toISOString()
+  };
+  
+  backlogsData.backlogs.push(newBacklog);
+  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  
+  console.log('✅ Added new backlog item:');
+  console.log(`   ${newBacklog.id}. ${newBacklog.title}`);
+  console.log(`      ${newBacklog.description}\n`);
+  
+  projectState.appendLog({
+    action: 'BACKLOG_ADDED',
+    backlog: newBacklog
+  });
+}
+
+/**
+ * Execute reset-backlog command
+ */
+async function executeResetBacklog(projectState, requirement, state) {
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  
+  if (!existsSync(backlogsFile)) {
+    console.log('No backlogs found. Create a project first with npm run create-project');
+    return;
+  }
+  
+  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+  const backlogToReset = backlogsData.backlogs.find(b => b.id === parseInt(state.backlogId));
+  
+  if (!backlogToReset) {
+    console.error(`Backlog #${state.backlogId} not found`);
+    return;
+  }
+  
+  // Reset status to pending
+  backlogToReset.status = 'pending';
+  delete backlogToReset.completed_at;
+  
+  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  
+  console.log(`✅ Reset backlog #${backlogToReset.id}: ${backlogToReset.title} to pending status`);
+  
+  projectState.appendLog({
+    action: 'BACKLOG_RESET',
+    backlog: backlogToReset
+  });
+}
+
+/**
+ * Execute list-backlogs command
+ */
+async function executeListBacklogs(projectState, requirement, state) {
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  
+  if (!existsSync(backlogsFile)) {
+    console.log('No backlogs found. Create a project first with npm run create-project');
+    return;
+  }
+  
+  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+  
+  console.log(`\n📋 Project Backlogs (${backlogsData.backlogs.length} items):\n`);
+  
+  // Group by status
+  const pending = backlogsData.backlogs.filter(b => b.status === 'pending');
+  const inProgress = backlogsData.backlogs.filter(b => b.status === 'in_progress');
+  const completed = backlogsData.backlogs.filter(b => b.status === 'completed');
+  
+  if (inProgress.length > 0) {
+    console.log('🔄 In Progress:');
+    inProgress.forEach(b => {
+      console.log(`   ${b.id}. ${b.title} [${b.priority}]`);
+    });
+    console.log('');
+  }
+  
+  // Show all backlogs with checkboxes
+  console.log('All Backlogs:');
+  backlogsData.backlogs.forEach(b => {
+    const checkbox = b.status === 'completed' ? '✅' : '⬜';
+    const statusIndicator = b.status === 'in_progress' ? ' 🔄' : '';
+    console.log(`${checkbox} ${b.id}. ${b.title} [${b.priority}]${statusIndicator}`);
+    
+    if (b.status !== 'completed') {
+      console.log(`      ${b.description}`);
+      if (b.dependencies.length > 0) {
+        const unmetDeps = b.dependencies.filter(dep => 
+          !backlogsData.backlogs.find(backlog => backlog.id === dep && backlog.status === 'completed')
+        );
+        if (unmetDeps.length > 0) {
+          console.log(`      ⚠️  Depends on: ${unmetDeps.join(', ')}`);
+        }
+      }
+    }
+  });
+  console.log('');
+  
+  console.log('Use "npm run process-backlog [id]" to work on a specific backlog');
+}
+
+/**
+ * Execute process-backlog command
+ */
+async function executeProcessBacklog(projectState, requirement, state) {
+  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  
+  if (!existsSync(backlogsFile)) {
+    console.log('No backlogs found. Create a project first with npm run create-project');
+    return;
+  }
+  
+  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+  
+  // Determine which backlog to process
+  let backlogToProcess = null;
+  
+  if (state.backlogId) {
+    // Specific backlog requested
+    backlogToProcess = backlogsData.backlogs.find(b => b.id === parseInt(state.backlogId));
+    if (!backlogToProcess) {
+      console.error(`Backlog #${state.backlogId} not found`);
+      return;
+    }
+  } else {
+    // First check for in-progress backlogs (interrupted work)
+    const inProgress = backlogsData.backlogs.filter(b => b.status === 'in_progress');
+    if (inProgress.length > 0) {
+      backlogToProcess = inProgress[0];
+      console.log(`📋 Found interrupted backlog: #${backlogToProcess.id} ${backlogToProcess.title}`);
+    } else {
+      // Find next available pending backlog (respecting dependencies)
+      const pending = backlogsData.backlogs.filter(b => b.status === 'pending');
+      const completed = backlogsData.backlogs.filter(b => b.status === 'completed').map(b => b.id);
+      
+      for (const backlog of pending) {
+        // Check if all dependencies are completed
+        if (backlog.dependencies.every(dep => completed.includes(dep))) {
+          backlogToProcess = backlog;
+          break;
+        }
+      }
+      
+      if (!backlogToProcess && pending.length > 0) {
+        console.log('⚠️  All pending backlogs have unmet dependencies');
+        console.log('\nPending backlogs:');
+        pending.forEach(b => {
+          console.log(`   ${b.id}. ${b.title} - waiting for: ${b.dependencies.join(', ')}`);
+        });
+        return;
+      }
+    }
+  }
+  
+  if (!backlogToProcess) {
+    console.log('✅ All backlogs completed!');
+    return;
+  }
+  
+  console.log(`\n📋 Processing backlog #${backlogToProcess.id}: ${backlogToProcess.title}\n`);
+  console.log(`Description: ${backlogToProcess.description}`);
+  console.log(`Priority: ${backlogToProcess.priority}`);
+  console.log(`Estimated effort: ${backlogToProcess.estimated_effort}\n`);
+  
+  // Check if we're resuming an interrupted backlog
+  let needsArchitect = true;
+  if (backlogToProcess.status === 'in_progress') {
+    console.log('⚠️  Resuming interrupted backlog...\n');
+    
+    // Check if we have tasks for this backlog in the logs
+    const allTasks = projectState.getRequirementTasks(backlogToProcess.description);
+    if (allTasks.length > 0) {
+      needsArchitect = false;
+      state.tasks = allTasks;
+      console.log(`Found ${allTasks.length} existing tasks from previous attempt`);
+      
+      // Check task completion status
+      const completedTasks = allTasks.filter(t => t.status === 'completed');
+      const incompleteTasks = allTasks.filter(t => t.status !== 'completed');
+      
+      if (completedTasks.length > 0 && incompleteTasks.length > 0) {
+        // Some tasks done, some not - review and continue
+        console.log(`✓ Completed: ${completedTasks.length} tasks`);
+        console.log(`⬜ Remaining: ${incompleteTasks.length} tasks\n`);
+        
+        // Review what's been built so far
+        console.log('📊 Reviewing existing code before continuing...');
+        const allFiles = getAllProjectFilesWithContent(projectState.projectPath).join('\n');
+        const reviewPrompt = `Review the current state of: ${backlogToProcess.description}\n\nCompleted tasks:\n${completedTasks.map(t => `- ${t.description}`).join('\n')}\n\nRemaining tasks:\n${incompleteTasks.map(t => `- ${t.description}`).join('\n')}\n\nCurrent code:\n${allFiles}\n\nProvide a brief assessment: Is the code working so far? Any issues to fix before continuing?`;
+        
+        try {
+          const review = await callClaude(reviewPrompt, 'Code Reviewer', projectState);
+          console.log('Review complete. Continuing with remaining tasks...\n');
+        } catch (e) {
+          console.log('Review skipped. Continuing with remaining tasks...\n');
+        }
+      } else if (incompleteTasks.length === 0) {
+        console.log('⚠️  All tasks appear complete but backlog was interrupted');
+        console.log('    Will verify with tests...\n');
+      }
+    }
+  }
+  
+  // Update status to in_progress
+  backlogToProcess.status = 'in_progress';
+  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  
+  // Run standard architect to break down into tasks (if needed)
+  if (needsArchitect) {
+    await runArchitect(projectState, backlogToProcess.description, state);
+  }
+  
+  // Run coder for each task
+  await runCoderTasks(projectState, backlogToProcess.description, state);
+  
+  // If successful, mark as completed
+  backlogToProcess.status = 'completed';
+  backlogToProcess.completed_at = new Date().toISOString();
+  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  
+  console.log(`\n✅ Backlog #${backlogToProcess.id} completed!`);
+  
+  projectState.appendLog({
+    action: 'BACKLOG_COMPLETED',
+    backlog: backlogToProcess
+  });
 }
 
 /**

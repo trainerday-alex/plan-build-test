@@ -58,8 +58,11 @@ Requirements:
 - Each task that creates UI should update what's served at /plan-build-test
 - Set status to "FAILURE" with error field if anything is unclear
 - Tasks should be ordered by dependencies (prerequisite tasks first)
-- Each task should be completable in 10-15 minutes
+- Each task should be completable in 5-10 minutes
 - Break large tasks into smaller, testable chunks
+- Since this is AI-driven development, tasks complete quickly (~1 minute each)
+- Aim for 4-10 tasks per backlog (sweet spot is 6-8 tasks)
+- If you need more than 10 tasks, consider splitting into two backlogs
 
 Form Validation Considerations:
 - When designing forms, be explicit about validation approach
