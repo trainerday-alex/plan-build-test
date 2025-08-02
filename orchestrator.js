@@ -636,18 +636,22 @@ export async function runOrchestrator(projectName, requirement) {
       } else {
         // Load existing state for this specific requirement
         const existingRequirementState = projectState.loadRequirementState(requirement);
-        if (existingRequirementState) {
-          console.log(`📋 Found existing tasks for: "${requirement}"`);
-          state = { ...state, ...existingRequirementState };
-        } else if (requirement.includes('Fix failing tests')) {
-          // For fix command, load the most recent state
+        
+        // For fix command, always show the most recent state
+        if (requirement.includes('Fix failing tests')) {
           const recentState = projectState.getMostRecentState();
           if (recentState) {
             console.log(`📋 Fix command: loading most recent project state`);
             state = { ...state, ...recentState };
+          } else if (existingRequirementState) {
+            console.log(`📋 Found existing fix tasks`);
+            state = { ...state, ...existingRequirementState };
           } else {
             console.log(`📋 New requirement: "${requirement}" - starting fresh`);
           }
+        } else if (existingRequirementState) {
+          console.log(`📋 Found existing tasks for: "${requirement}"`);
+          state = { ...state, ...existingRequirementState };
         } else {
           console.log(`📋 New requirement: "${requirement}" - starting fresh`);
           // state stays as initialized above (empty)
@@ -725,7 +729,17 @@ export async function runOrchestrator(projectName, requirement) {
         // Skip to task execution
       } else {
         // Show status for non-refactor tasks
-        console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
+        if (state.tasks.length > 0) {
+          console.log(`📊 Current Status: ${state.completedTasks.length}/${state.tasks.length} tasks completed`);
+          if (state.completedTasks.length > 0) {
+            console.log('✅ Completed tasks:');
+            state.completedTasks.forEach((task, i) => {
+              console.log(`   ${i + 1}. ${task}`);
+            });
+          }
+        } else {
+          console.log(`📊 Current Status: No tasks found yet`);
+        }
         
         // Get log summaries for regular review
         const logSummary = projectState.getLogSummary();
