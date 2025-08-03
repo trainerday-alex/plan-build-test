@@ -396,12 +396,7 @@ Respond with JSON:
       console.log('\n🧪 Running tests to verify fixes...\n');
       
       // Kill any existing server first
-      try {
-        await execAsync('lsof -ti:3000 | xargs kill -9', { cwd: projectState.projectPath });
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      } catch {
-        // No server to kill
-      }
+      await killPort(3000, projectState.projectPath);
       
       try {
         const { stdout } = await execAsync('npm test', { 
@@ -472,14 +467,12 @@ export async function executeAddBacklog(projectState, requirement, state) {
  * Execute list-backlogs command
  */
 export async function executeListBacklogs(projectState, requirement, state) {
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  const backlogsData = projectState.getBacklogsData();
   
-  if (!existsSync(backlogsFile)) {
+  if (!backlogsData) {
     console.log('No backlogs found. Create a project first with npm run create-project');
     return;
   }
-  
-  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
   
   console.log(`\n📋 Project Backlogs (${backlogsData.backlogs.length} items):\n`);
   
@@ -524,14 +517,12 @@ export async function executeListBacklogs(projectState, requirement, state) {
  * Execute reset-backlog command
  */
 export async function executeResetBacklog(projectState, requirement, state) {
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  const backlogsData = projectState.getBacklogsData();
   
-  if (!existsSync(backlogsFile)) {
+  if (!backlogsData) {
     console.log('No backlogs found. Create a project first with npm run create-project');
     return;
   }
-  
-  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
   const backlogToReset = backlogsData.backlogs.find(b => b.id === parseInt(state.backlogId));
   
   if (!backlogToReset) {
@@ -540,10 +531,7 @@ export async function executeResetBacklog(projectState, requirement, state) {
   }
   
   // Reset status to pending
-  backlogToReset.status = 'pending';
-  delete backlogToReset.completed_at;
-  
-  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  projectState.updateBacklogStatus(backlogToReset.id, 'pending', { completed_at: undefined });
   
   console.log(`✅ Reset backlog #${backlogToReset.id}: ${backlogToReset.title} to pending status`);
   
@@ -557,14 +545,12 @@ export async function executeResetBacklog(projectState, requirement, state) {
  * Execute process-backlog command
  */
 export async function executeProcessBacklog(projectState, requirement, state) {
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
+  const backlogsData = projectState.getBacklogsData();
   
-  if (!existsSync(backlogsFile)) {
+  if (!backlogsData) {
     console.log('No backlogs found. Create a project first with npm run create-project');
     return;
   }
-  
-  const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
   
   // Determine which backlog to process
   let backlogToProcess = null;
@@ -656,8 +642,7 @@ export async function executeProcessBacklog(projectState, requirement, state) {
   }
   
   // Update status to in_progress
-  backlogToProcess.status = 'in_progress';
-  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  projectState.updateBacklogStatus(backlogToProcess.id, 'in_progress');
   
   // Run standard architect to break down into tasks (if needed)
   if (needsArchitect) {
@@ -668,9 +653,9 @@ export async function executeProcessBacklog(projectState, requirement, state) {
   await runCoderTasks(projectState, backlogToProcess.description, state);
   
   // If successful, mark as completed
-  backlogToProcess.status = 'completed';
-  backlogToProcess.completed_at = new Date().toISOString();
-  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  projectState.updateBacklogStatus(backlogToProcess.id, 'completed', {
+    completed_at: new Date().toISOString()
+  });
   
   console.log(`\n✅ Backlog #${backlogToProcess.id} completed!`);
   
@@ -778,7 +763,6 @@ export async function runArchitectBacklogs(projectState, requirement, state) {
   }
   
   // Save backlogs to file
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
   const backlogsData = {
     project_summary: architectPlan.project_summary,
     runtime_requirements: architectPlan.runtime_requirements,
@@ -791,7 +775,7 @@ export async function runArchitectBacklogs(projectState, requirement, state) {
     }))
   };
   
-  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+  projectState.saveBacklogsData(backlogsData);
   console.log(`\n📋 Created ${backlogsData.backlogs.length} backlogs:\n`);
   
   // Display backlogs
@@ -1118,29 +1102,19 @@ export async function runTests(projectState, projectPath, requirement, state) {
   }
   
   // Always install dependencies to ensure any new packages are installed
-  console.log('\n📦 Installing dependencies...');
+  console.log('');
   try {
-    await execAsync('npm install', { 
-      cwd: projectPath,
-      timeout: 120000 
-    });
-    console.log('  ✓ Dependencies installed');
+    await npmInstall(projectPath);
   } catch (error) {
-    console.error('  ❌ Failed to install dependencies:', error.message);
     // Don't continue if npm install fails - tests will fail anyway
-    throw new Error('Failed to install dependencies');
+    throw error;
   }
   
   // Run tests
   console.log('\n🧪 Running tests...\n');
   
   // Kill any existing server on port 3000 first
-  try {
-    await execAsync('lsof -ti:3000 | xargs kill -9', { cwd: projectPath });
-    await new Promise(resolve => setTimeout(resolve, 1000));
-  } catch {
-    // No server to kill
-  }
+  await killPort(3000, projectPath);
   
   let testOutput = '';
   try {
