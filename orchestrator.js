@@ -16,7 +16,6 @@ import {
   executeAddTask,
   executeFix,
   executeRefactor,
-  executeFixTests,
   runTests
 } from './src/orchestrator-execution.js';
 
@@ -27,6 +26,11 @@ import {
   executeListBacklogs,
   executeResetBacklog
 } from './src/commands/backlog-commands.js';
+
+// Import test commands from new location
+import {
+  executeFixTests
+} from './src/commands/test-commands.js';
 
 // Export for backward compatibility
 export { loadTemplate, createPrompts } from './src/template-utils.js';

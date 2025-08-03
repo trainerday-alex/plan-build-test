@@ -191,6 +191,24 @@ The human stays in control, deciding what happens next after each cycle.
 - **Too many tests**: Use `npm run fix-tests` to simplify tests to core functionality
 - **Need to see details**: Check `log.txt` and `task-log.txt` in your project
 
+## Code Statistics
+
+Current file sizes (excluding comments and log statements):
+
+| File | Total Lines | Lines of Code |
+|------|-------------|---------------|
+| orchestrator-execution.js | 711 | 369 |
+| template-utils.js | 262 | 182 |
+| project-state.js | 259 | 172 |
+| test-setup-utils.js | 250 | 170 |
+| agent-parsers.js | 239 | 167 |
+| test-commands.js | 283 | 149 |
+| orchestrator-cli.js | 264 | 145 |
+| backlog-commands.js | 259 | 124 |
+| orchestrator.js | 142 | 84 |
+
+The refactoring plan (see refactor.md) aims to break up orchestrator-execution.js into smaller, focused modules.
+
 ## License
 
 MIT
