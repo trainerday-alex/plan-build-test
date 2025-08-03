@@ -44,7 +44,7 @@ Move all execution logic from orchestrator.js:
 Keep only:
 - Import statements
 - Export statements for backward compatibility
-- The main `runOrchestratorNew` function that:
+- The main `runOrchestrator` function that:
   - Creates ProjectState
   - Calls appropriate execute* functions from orchestrator-execution.js
   - Handles errors

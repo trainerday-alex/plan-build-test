@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { runOrchestratorNew } from './orchestrator.js';
+import { runOrchestrator } from './orchestrator.js';
 import { exec } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
@@ -37,7 +37,7 @@ const main = wrapAsync(async () => {
       setCurrentProject(projectName);
       
       console.log('Then: Plan → Build → Test cycle for first task\n');
-      await runOrchestratorNew(projectName, description, 'create-project');
+      await runOrchestrator(projectName, description, 'create-project');
       break;
 
     case 'backlog':
@@ -53,7 +53,7 @@ const main = wrapAsync(async () => {
       await autoCommit(backlogProjectPath, `Before backlog: ${backlogDescription.substring(0, 50)}...`);
       
       console.log('\nAdding backlog item...\n');
-      await runOrchestratorNew(currentProject, `Add backlog: ${backlogDescription}`, 'add-backlog');
+      await runOrchestrator(currentProject, `Add backlog: ${backlogDescription}`, 'add-backlog');
       break;
 
     case 'process-backlog':
@@ -61,10 +61,10 @@ const main = wrapAsync(async () => {
       const backlogId = args[0];
       if (!backlogId) {
         log(EMOJI.clipboard, 'Processing next backlog item...');
-        await runOrchestratorNew(processProject, 'Process next backlog item', 'process-backlog');
+        await runOrchestrator(processProject, 'Process next backlog item', 'process-backlog');
       } else {
         log(EMOJI.clipboard, `Processing backlog item #${backlogId}...`);
-        await runOrchestratorNew(processProject, `Process backlog item #${backlogId}`, 'process-backlog', { backlogId });
+        await runOrchestrator(processProject, `Process backlog item #${backlogId}`, 'process-backlog', { backlogId });
       }
       break;
 
@@ -76,7 +76,7 @@ const main = wrapAsync(async () => {
         process.exit(1);
       }
       console.log(`\n📋 Listing backlogs for ${listProject}...`);
-      await runOrchestratorNew(listProject, 'List backlogs', 'list-backlogs');
+      await runOrchestrator(listProject, 'List backlogs', 'list-backlogs');
       break;
 
     case 'reset-backlog':
@@ -91,7 +91,7 @@ const main = wrapAsync(async () => {
         process.exit(1);
       }
       console.log(`\n🔄 Resetting backlog #${backlogIdToReset} to pending status...`);
-      await runOrchestratorNew(resetProject, `Reset backlog #${backlogIdToReset}`, 'reset-backlog', { backlogId: backlogIdToReset });
+      await runOrchestrator(resetProject, `Reset backlog #${backlogIdToReset}`, 'reset-backlog', { backlogId: backlogIdToReset });
       break;
 
     case 'help':
@@ -124,7 +124,7 @@ const main = wrapAsync(async () => {
       const fixProject = requireCurrentProject();
       console.log(`\n🔧 Fixing issues in ${fixProject}...`);
       console.log('Running: Plan → Build → Test\n');
-      await runOrchestratorNew(fixProject, 'Fix failing tests and resolve issues', 'fix');
+      await runOrchestrator(fixProject, 'Fix failing tests and resolve issues', 'fix');
       break;
 
     case 'refactor':
@@ -138,7 +138,7 @@ const main = wrapAsync(async () => {
       await autoCommit(refactorProjectPath, 'Before refactor');
       
       console.log('\nRunning: Plan → Build → Test\n');
-      await runOrchestratorNew(refactorProject, 'Refactor and improve existing code', 'refactor');
+      await runOrchestrator(refactorProject, 'Refactor and improve existing code', 'refactor');
       break;
 
     case 'change-project':
@@ -252,7 +252,7 @@ const main = wrapAsync(async () => {
       const fixTestsProject = requireCurrentProject();
       log(EMOJI.magnifier, `Analyzing and fixing failing tests in ${fixTestsProject}...`);
       console.log('Running: Read Logs → Analyze Failures → Fix Tests\n');
-      await runOrchestratorNew(fixTestsProject, 'Fix failing tests to match implementation (do not change code)', 'fix-tests');
+      await runOrchestrator(fixTestsProject, 'Fix failing tests to match implementation (do not change code)', 'fix-tests');
       break;
 
     default:

@@ -33,7 +33,7 @@ export { ProjectState } from './src/project-state.js';
 /**
  * Main orchestrator function with command-based flow
  */
-export async function runOrchestratorNew(projectName, requirement, commandType = 'create-project', options = {}) {
+export async function runOrchestrator(projectName, requirement, commandType = 'create-project', options = {}) {
   if (!projectName || !requirement) {
     console.error('❌ Error: Both project name and requirement are required');
     process.exit(1);
