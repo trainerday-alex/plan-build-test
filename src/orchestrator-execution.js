@@ -45,7 +45,7 @@ async function callClaudeWrapper(prompt, role, projectState = null, retryCount =
  * Execute create-project command flow
  */
 export async function executeCreateProject(projectState, requirement, state) {
-  console.log('\n📝 Starting new project...\n');
+  Logger.section('Starting new project...', '📝');
   
   // Copy template files
   await copyTemplateFiles(projectState);
@@ -57,11 +57,11 @@ export async function executeCreateProject(projectState, requirement, state) {
   await runArchitectBacklogs(projectState, requirement, state);
   
   // Don't run any tasks - just show the backlogs
-  console.log('\n✅ Project setup complete!');
-  console.log('\n📋 To start working on a backlog, use:');
-  console.log('   npm run process-backlog');
-  console.log('\n📋 To add more backlogs, use:');
-  console.log('   npm run backlog <description>');
+  Logger.success('Project setup complete!');
+  Logger.info('To start working on a backlog, use:');
+  Logger.command('npm run process-backlog');
+  Logger.info('To add more backlogs, use:');
+  Logger.command('npm run backlog <description>');
 }
 
 /**
@@ -100,7 +100,7 @@ async function copyTemplateFiles(projectState) {
  * Execute task command flow
  */
 export async function executeAddTask(projectState, requirement, state) {
-  console.log('\n📝 Adding new task to existing project...\n');
+  Logger.section('Adding new task to existing project...', '📝');
   
   // Run Architect for new task
   await runArchitect(projectState, requirement, state);
@@ -113,7 +113,7 @@ export async function executeAddTask(projectState, requirement, state) {
  * Execute fix command flow
  */
 export async function executeFix(projectState, requirement, state) {
-  console.log('\n🔧 Fixing issues in project...\n');
+  Logger.section('Fixing issues in project...', '🔧');
   
   // First, check if we're in the middle of a backlog
   let currentBacklog = null;
@@ -123,24 +123,24 @@ export async function executeFix(projectState, requirement, state) {
     currentBacklog = backlogsData.backlogs.find(b => b.status === 'in_progress');
     
     if (currentBacklog) {
-      console.log(`📋 Working on backlog #${currentBacklog.id}: ${currentBacklog.title}`);
+      Logger.info(`Working on backlog #${currentBacklog.id}: ${currentBacklog.title}`);
     }
   }
   
   // Check if there's an incomplete task to resume
   const lastIncompleteTask = projectState.getLastIncompleteTask();
   if (lastIncompleteTask >= 0) {
-    console.log(`📝 Found incomplete task at index ${lastIncompleteTask + 1}`);
-    console.log('🔄 Resuming task execution...\n');
+    Logger.info(`Found incomplete task at index ${lastIncompleteTask + 1}`);
+    Logger.info('Resuming task execution...');
     
     // Load existing tasks from the last architect run
     const taskManager = new TaskManager(projectState);
     const tasks = taskManager.reconstructTasksFromLogs();
     state.tasks = tasks;
     
-    console.log(`📋 Found ${tasks.length} tasks from current backlog`);
+    Logger.info(`Found ${tasks.length} tasks from current backlog`);
     const completedCount = tasks.filter(t => t.status === 'completed').length;
-    console.log(`✅ ${completedCount} completed, ${tasks.length - completedCount} remaining\n`);
+    Logger.success(`${completedCount} completed, ${tasks.length - completedCount} remaining`);
     
     // Resume coder tasks from where we left off
     // Use the backlog description as the requirement if available
@@ -165,7 +165,7 @@ export async function executeFix(projectState, requirement, state) {
  * Execute refactor command flow
  */
 export async function executeRefactor(projectState, requirement, state) {
-  console.log('\n♻️  Refactoring project...\n');
+  Logger.section('Refactoring project...', '♻️');
   
   // Run Refactor Analyst
   await runRefactorAnalyst(projectState, requirement, state);
@@ -178,7 +178,7 @@ export async function executeRefactor(projectState, requirement, state) {
  * Execute fix-tests command flow
  */
 export async function executeFixTests(projectState, requirement, state) {
-  console.log('\n🔍 Running tests to check current status...\n');
+  Logger.section('Running tests to check current status...', '🔍');
   
   let testOutput = '';
   
@@ -186,12 +186,12 @@ export async function executeFixTests(projectState, requirement, state) {
   // First run npm install to ensure all dependencies are available
   try {
     await npmInstall(projectState.projectPath);
-    console.log('');
+    console.log(''); // Empty line
   } catch (error) {
     console.error('  ⚠️  Continuing anyway to see test errors...\n');
   }
   
-  console.log('📋 Running tests...');
+  Logger.info('Running tests...');
   
   // Run the tests
   let testFailed = false;
@@ -212,34 +212,34 @@ export async function executeFixTests(projectState, requirement, state) {
   // Also append to log for future use
   projectState.appendTextLog('\nRunning tests...\n' + testOutput);
   
-  console.log('\n📊 Test analysis:\n');
+  Logger.section('Test analysis', '📊');
   
   // Check if tests are passing
   const testsArePassing = testOutput.includes(' passed (') && !testOutput.includes(' failed (');
   
   // If no test output detected, the test command might have issues
   if (!testOutput || testOutput.trim().length === 0) {
-    console.log('❌ No test output detected. The test command may have failed to run.');
-    console.log('   Please check that tests can be run with: npm test\n');
+    Logger.error('No test output detected. The test command may have failed to run.');
+    Logger.info('Please check that tests can be run with: npm test', true);
     return;
   }
   
   if (testsArePassing) {
-    console.log('✅ All tests are passing! No fixes needed.\n');
+    Logger.success('All tests are passing! No fixes needed!');
     
     // Check if there are too many tests (more than 5)
     const testCountMatch = testOutput.match(/(\d+) passed/);
     const testCount = testCountMatch ? parseInt(testCountMatch[1]) : 0;
     
     if (testCount > 5) {
-      console.log(`⚠️  Warning: You have ${testCount} tests. Consider simplifying to 2-3 core functionality tests.`);
-      console.log('   Tests should focus on main functionality, not edge cases.\n');
+      Logger.warning(`You have ${testCount} tests. Consider simplifying to 2-3 core functionality tests.`);
+      Logger.info('Tests should focus on main functionality, not edge cases.', true);
     }
     
     return;
   }
   
-  console.log('❌ Tests are failing. Analyzing failures...\n');
+  Logger.error('Tests are failing. Analyzing failures...');
   
   // Get all test files from our standard test directory
   const testFiles = [];
@@ -277,7 +277,7 @@ export async function executeFixTests(projectState, requirement, state) {
   }
   
   // Run Tester to fix the tests
-  console.log('🔧 Fixing tests to match implementation...\n');
+  Logger.section('Fixing tests to match implementation...', '🔧');
   
   // Load the tester-fix template
   let fixPrompt;
@@ -326,48 +326,52 @@ Respond with JSON:
   try {
     fixResult = await callClaudeWrapper(fixPrompt, 'Tester', projectState);
   } catch (error) {
-    console.log('❌ Error calling Claude API:', error.message);
-    console.log('\n💡 Falling back to manual analysis...\n');
+    Logger.error(`Error calling Claude API: ${error.message}`);
+    Logger.info('Falling back to manual analysis...');
     
     // Simple fallback: analyze test output and provide recommendations
-    console.log('📋 Test failures detected:\n');
+    Logger.info('Test failures detected:');
     
     // Extract failure information from test output
     const failurePattern = /✘.*?\((.*?)\)/g;
     const failures = [...testOutput.matchAll(failurePattern)];
     
     if (failures.length > 0) {
-      console.log('Failed tests:');
+      Logger.info('Failed tests:');
       failures.forEach((match, i) => {
-        console.log(`  ${i + 1}. ${match[0]}`);
+        Logger.command(`${i + 1}. ${match[0]}`);
       });
-      console.log('\n');
+      console.log(''); // Empty line // Empty line for spacing
     }
     
     // Analyze common error patterns
     if (testOutput.includes('is already used')) {
-      console.log('🔧 Port conflict detected. Solutions:');
+      Logger.warning('Port conflict detected. Solutions:');
       const portMatch = testOutput.match(/localhost:(\d+)/);
       const conflictPort = portMatch ? portMatch[1] : 'PORT';
-      console.log(`  1. Kill the process: lsof -ti:${conflictPort} | xargs kill -9`);
-      console.log('  2. Or update playwright.config.js: reuseExistingServer: true\n');
+      Logger.command(`1. Kill the process: lsof -ti:${conflictPort} | xargs kill -9`);
+      Logger.command(`2. Or update playwright.config.js: reuseExistingServer: true`);
+      console.log(''); // Empty line // Empty line for spacing
     }
     
     if (testOutput.includes('Expected') && (testOutput.includes('Received') || testOutput.includes('to contain'))) {
-      console.log('🔧 Assertion mismatch detected. The tests expect different values than what the implementation provides.');
-      console.log('  Review the test expectations and update them to match the actual implementation.\n');
+      Logger.warning('Assertion mismatch detected. The tests expect different values than what the implementation provides.');
+      Logger.info('Review the test expectations and update them to match the actual implementation.', true);
     }
     
     if (testOutput.includes('Timed out') && testOutput.includes('waiting for')) {
-      console.log('🔧 Timeout detected. The test is waiting for something that never appears.');
-      console.log('  Check if the element selector is correct or if the timing needs adjustment.\n');
+      Logger.warning('Timeout detected. The test is waiting for something that never appears.');
+      Logger.info('Check if the element selector is correct or if the timing needs adjustment.', true);
     }
     
-    console.log('📝 To fix tests manually:');
-    console.log('  1. Review the test output above');
-    console.log('  2. Check what the implementation actually does');
-    console.log('  3. Update test expectations to match the implementation');
-    console.log('  4. Run npm test again to verify\n');
+    Logger.info('To fix tests manually:');
+    const steps = [
+      'Review the test output above',
+      'Check what the implementation actually does',
+      'Update test expectations to match the implementation',
+      'Run npm test again to verify'
+    ];
+    Logger.list(steps, true);
     
     return;
   }
@@ -382,18 +386,16 @@ Respond with JSON:
       // Write the fixed test files
       fixes.fixed_tests.forEach(fix => {
         writeFileSync(fix.file_path, fix.updated_content);
-        console.log(`  ✓ Updated: ${fix.file_path}`);
+        Logger.file('Updated', fix.file_path);
       });
       
-      console.log('\n📋 Changes made:');
-      fixes.changes_made.forEach((change, i) => {
-        console.log(`  ${i + 1}. ${change}`);
-      });
+      Logger.info('Changes made:');
+      Logger.list(fixes.changes_made, true);
       
-      console.log('\n✅ Test fixes applied!');
+      Logger.success('Test fixes applied!');
       
       // Run tests again to verify fixes
-      console.log('\n🧪 Running tests to verify fixes...\n');
+      Logger.section('Running tests to verify fixes...', '🧪');
       
       // Kill any existing server first
       await killPort(3000, projectState.projectPath);
@@ -403,12 +405,12 @@ Respond with JSON:
           cwd: projectState.projectPath,
           env: { ...process.env, CI: 'true' }
         });
-        console.log('✅ All tests are now passing!\n');
-        console.log(stdout);
+        Logger.success('All tests are now passing!');
+        console.log(stdout); // Show test output
       } catch (error) {
-        console.log('⚠️  Some tests are still failing:\n');
-        console.log(error.stdout || error.message);
-        if (error.stderr) console.log(error.stderr);
+        Logger.warning('Some tests are still failing:');
+        console.log(error.stdout || error.message); // Show error output
+        if (error.stderr) console.log(error.stderr); // Show stderr output
       }
       
       // Log the fixes
@@ -421,13 +423,14 @@ Respond with JSON:
       projectState.appendTaskLog('COMPLETE', `Fixed ${fixes.fixed_tests.length} test file(s)`);
       
     } else {
-      console.log('❌ Unable to parse fix response. Raw response:');
-      console.log(fixResult);
+      Logger.error('Unable to parse fix response. Raw response:');
+      console.log(fixResult); // Show raw response // Show raw response
     }
     
   } catch (error) {
-    console.log('❌ Error applying fixes:', error.message);
-    console.log('Raw response:', fixResult);
+    Logger.error(`Error applying fixes: ${error.message}`);
+    Logger.info('Raw response:');
+    console.log(fixResult); // Show raw response
   }
 }
 
@@ -435,7 +438,7 @@ Respond with JSON:
  * Execute add-backlog command
  */
 export async function executeAddBacklog(projectState, requirement, state) {
-  console.log('\n📋 Adding new backlog item...\n');
+  Logger.section('Adding new backlog item...', '📋');
   
   // Load existing backlogs
   let backlogsData = projectState.getBacklogsData() || { backlogs: [] };
@@ -453,9 +456,10 @@ export async function executeAddBacklog(projectState, requirement, state) {
     acceptance_criteria: []
   });
   
-  console.log('✅ Added new backlog item:');
-  console.log(`   ${newBacklog.id}. ${newBacklog.title}`);
-  console.log(`      ${newBacklog.description}\n`);
+  Logger.success('Added new backlog item:');
+  Logger.command(`${newBacklog.id}. ${newBacklog.title}`);
+  Logger.command(`   ${newBacklog.description}`);
+  console.log(''); // Empty line // Empty line
   
   projectState.appendLog({
     action: 'BACKLOG_ADDED',
@@ -470,11 +474,11 @@ export async function executeListBacklogs(projectState, requirement, state) {
   const backlogsData = projectState.getBacklogsData();
   
   if (!backlogsData) {
-    console.log('No backlogs found. Create a project first with npm run create-project');
+    Logger.warning('No backlogs found. Create a project first with npm run create-project');
     return;
   }
   
-  console.log(`\n📋 Project Backlogs (${backlogsData.backlogs.length} items):\n`);
+  Logger.section(`Project Backlogs (${backlogsData.backlogs.length} items)`, '📋');
   
   // Group by status
   const pending = backlogsData.backlogs.filter(b => b.status === 'pending');
@@ -482,35 +486,35 @@ export async function executeListBacklogs(projectState, requirement, state) {
   const completed = backlogsData.backlogs.filter(b => b.status === 'completed');
   
   if (inProgress.length > 0) {
-    console.log('🔄 In Progress:');
+    Logger.info('In Progress:');
     inProgress.forEach(b => {
-      console.log(`   ${b.id}. ${b.title} [${b.priority}]`);
+      Logger.command(`${b.id}. ${b.title} [${b.priority}]`);
     });
-    console.log('');
+    console.log(''); // Empty line // Empty line
   }
   
   // Show all backlogs with checkboxes
-  console.log('All Backlogs:');
+  Logger.info('All Backlogs:');
   backlogsData.backlogs.forEach(b => {
     const checkbox = b.status === 'completed' ? '✅' : '⬜';
     const statusIndicator = b.status === 'in_progress' ? ' 🔄' : '';
-    console.log(`${checkbox} ${b.id}. ${b.title} [${b.priority}]${statusIndicator}`);
+    Logger.command(`${checkbox} ${b.id}. ${b.title} [${b.priority}]${statusIndicator}`);
     
     if (b.status !== 'completed') {
-      console.log(`      ${b.description}`);
+      Logger.command(`   ${b.description}`);
       if (b.dependencies.length > 0) {
         const unmetDeps = b.dependencies.filter(dep => 
           !backlogsData.backlogs.find(backlog => backlog.id === dep && backlog.status === 'completed')
         );
         if (unmetDeps.length > 0) {
-          console.log(`      ⚠️  Depends on: ${unmetDeps.join(', ')}`);
+          Logger.warning(`Depends on: ${unmetDeps.join(', ')}`, true);
         }
       }
     }
   });
-  console.log('');
+  console.log(''); // Empty line // Empty line
   
-  console.log('Use "npm run process-backlog [id]" to work on a specific backlog');
+  Logger.info('Use "npm run process-backlog [id]" to work on a specific backlog');
 }
 
 /**
@@ -520,7 +524,7 @@ export async function executeResetBacklog(projectState, requirement, state) {
   const backlogsData = projectState.getBacklogsData();
   
   if (!backlogsData) {
-    console.log('No backlogs found. Create a project first with npm run create-project');
+    Logger.warning('No backlogs found. Create a project first with npm run create-project');
     return;
   }
   const backlogToReset = backlogsData.backlogs.find(b => b.id === parseInt(state.backlogId));
@@ -533,7 +537,7 @@ export async function executeResetBacklog(projectState, requirement, state) {
   // Reset status to pending
   projectState.updateBacklogStatus(backlogToReset.id, 'pending', { completed_at: undefined });
   
-  console.log(`✅ Reset backlog #${backlogToReset.id}: ${backlogToReset.title} to pending status`);
+  Logger.success(`Reset backlog #${backlogToReset.id}: ${backlogToReset.title} to pending status`);
   
   projectState.appendLog({
     action: 'BACKLOG_RESET',
@@ -548,7 +552,7 @@ export async function executeProcessBacklog(projectState, requirement, state) {
   const backlogsData = projectState.getBacklogsData();
   
   if (!backlogsData) {
-    console.log('No backlogs found. Create a project first with npm run create-project');
+    Logger.warning('No backlogs found. Create a project first with npm run create-project');
     return;
   }
   
@@ -567,7 +571,7 @@ export async function executeProcessBacklog(projectState, requirement, state) {
     const inProgress = backlogsData.backlogs.filter(b => b.status === 'in_progress');
     if (inProgress.length > 0) {
       backlogToProcess = inProgress[0];
-      console.log(`📋 Found interrupted backlog: #${backlogToProcess.id} ${backlogToProcess.title}`);
+      Logger.info(`Found interrupted backlog: #${backlogToProcess.id} ${backlogToProcess.title}`);
     } else {
       // Find next available pending backlog (respecting dependencies)
       const pending = backlogsData.backlogs.filter(b => b.status === 'pending');
@@ -582,10 +586,10 @@ export async function executeProcessBacklog(projectState, requirement, state) {
       }
       
       if (!backlogToProcess && pending.length > 0) {
-        console.log('⚠️  All pending backlogs have unmet dependencies');
-        console.log('\nPending backlogs:');
+        Logger.warning('All pending backlogs have unmet dependencies');
+        Logger.info('Pending backlogs:');
         pending.forEach(b => {
-          console.log(`   ${b.id}. ${b.title} - waiting for: ${b.dependencies.join(', ')}`);
+          Logger.command(`${b.id}. ${b.title} - waiting for: ${b.dependencies.join(', ')}`);
         });
         return;
       }
@@ -593,26 +597,28 @@ export async function executeProcessBacklog(projectState, requirement, state) {
   }
   
   if (!backlogToProcess) {
-    console.log('✅ All backlogs completed!');
+    Logger.success('All backlogs completed!');
     return;
   }
   
-  console.log(`\n📋 Processing backlog #${backlogToProcess.id}: ${backlogToProcess.title}\n`);
-  console.log(`Description: ${backlogToProcess.description}`);
-  console.log(`Priority: ${backlogToProcess.priority}`);
-  console.log(`Estimated effort: ${backlogToProcess.estimated_effort}\n`);
+  Logger.section(`Processing backlog #${backlogToProcess.id}: ${backlogToProcess.title}`, '📋');
+  Logger.info(`Description: ${backlogToProcess.description}`);
+  Logger.info(`Priority: ${backlogToProcess.priority}`);
+  Logger.info(`Estimated effort: ${backlogToProcess.estimated_effort}`);
+  console.log(''); // Empty line // Empty line
   
   // Check if we're resuming an interrupted backlog
   let needsArchitect = true;
   if (backlogToProcess.status === 'in_progress') {
-    console.log('⚠️  Resuming interrupted backlog...\n');
+    Logger.warning('Resuming interrupted backlog...');
+    console.log(''); // Empty line // Empty line
     
     // Check if we have tasks for this backlog in the logs
     const allTasks = projectState.getRequirementTasks(backlogToProcess.description);
     if (allTasks.length > 0) {
       needsArchitect = false;
       state.tasks = allTasks;
-      console.log(`Found ${allTasks.length} existing tasks from previous attempt`);
+      Logger.info(`Found ${allTasks.length} existing tasks from previous attempt`);
       
       // Check task completion status
       const completedTasks = allTasks.filter(t => t.status === 'completed');
@@ -620,23 +626,27 @@ export async function executeProcessBacklog(projectState, requirement, state) {
       
       if (completedTasks.length > 0 && incompleteTasks.length > 0) {
         // Some tasks done, some not - review and continue
-        console.log(`✓ Completed: ${completedTasks.length} tasks`);
-        console.log(`⬜ Remaining: ${incompleteTasks.length} tasks\n`);
+        Logger.success(`Completed: ${completedTasks.length} tasks`);
+        Logger.info(`Remaining: ${incompleteTasks.length} tasks`);
+        console.log(''); // Empty line // Empty line
         
         // Review what's been built so far
-        console.log('📊 Reviewing existing code before continuing...');
+        Logger.info('Reviewing existing code before continuing...');
         const allFiles = getAllProjectFilesWithContent(projectState.projectPath).join('\n');
         const reviewPrompt = `Review the current state of: ${backlogToProcess.description}\n\nCompleted tasks:\n${completedTasks.map(t => `- ${t.description}`).join('\n')}\n\nRemaining tasks:\n${incompleteTasks.map(t => `- ${t.description}`).join('\n')}\n\nCurrent code:\n${allFiles}\n\nProvide a brief assessment: Is the code working so far? Any issues to fix before continuing?`;
         
         try {
           const review = await callClaudeWrapper(reviewPrompt, 'Code Reviewer', projectState);
-          console.log('Review complete. Continuing with remaining tasks...\n');
+          Logger.info('Review complete. Continuing with remaining tasks...');
+          console.log(''); // Empty line // Empty line
         } catch (e) {
-          console.log('Review skipped. Continuing with remaining tasks...\n');
+          Logger.info('Review skipped. Continuing with remaining tasks...');
+          console.log(''); // Empty line // Empty line
         }
       } else if (incompleteTasks.length === 0) {
-        console.log('⚠️  All tasks appear complete but backlog was interrupted');
-        console.log('    Will verify with tests...\n');
+        Logger.warning('All tasks appear complete but backlog was interrupted');
+        Logger.info('Will verify with tests...', true);
+        console.log(''); // Empty line // Empty line
       }
     }
   }
@@ -657,7 +667,7 @@ export async function executeProcessBacklog(projectState, requirement, state) {
     completed_at: new Date().toISOString()
   });
   
-  console.log(`\n✅ Backlog #${backlogToProcess.id} completed!`);
+  Logger.success(`Backlog #${backlogToProcess.id} completed!`);
   
   projectState.appendLog({
     action: 'BACKLOG_COMPLETED',
@@ -691,7 +701,7 @@ async function initializeGitWrapper(projectState) {
  * Run Architect to create tasks
  */
 export async function runArchitect(projectState, requirement, state) {
-  console.log('🏗️  Architect designing solution...');
+  Logger.section('Architect designing solution...', '🏗️');
   projectState.appendTextLog(`\nArchitect designing solution...`);
   projectState.appendTaskLog('PLAN', `Creating tasks for: ${requirement}`);
   
@@ -706,7 +716,8 @@ export async function runArchitect(projectState, requirement, state) {
   state.architectPlan = architectPlan; // Store for tester
   
   state.tasks = parseTasks(architectResult);
-  console.log(`📋 Found ${state.tasks.length} tasks to implement\n`);
+  Logger.info(`Found ${state.tasks.length} tasks to implement`);
+  console.log(''); // Empty line // Empty line
   
   if (state.tasks.length === 0) {
     throw new Error('Architect failed to create any tasks');
@@ -720,7 +731,7 @@ export async function runArchitect(projectState, requirement, state) {
     const taskNum = projectState.getNextTaskNumber();
     task.taskNumber = taskNum;
     
-    console.log(`   ${i + 1}. ${task.description}`);
+    Logger.command(`${i + 1}. ${task.description}`);
     
     projectState.appendLog({
       action: 'CREATE_TASK',
@@ -733,7 +744,7 @@ export async function runArchitect(projectState, requirement, state) {
     });
   });
   
-  console.log('');
+  console.log(''); // Empty line
   
   projectState.appendLog({
     action: 'ARCHITECT_COMPLETE',
@@ -746,7 +757,7 @@ export async function runArchitect(projectState, requirement, state) {
  * Run Architect to create backlogs instead of tasks
  */
 export async function runArchitectBacklogs(projectState, requirement, state) {
-  console.log('🏗️  Architect creating project backlogs...');
+  Logger.section('Architect creating project backlogs...', '🏗️');
   projectState.appendTextLog(`\nArchitect creating backlogs...`);
   projectState.appendTaskLog('PLAN', `Creating backlogs for: ${requirement}`);
   
@@ -776,17 +787,17 @@ export async function runArchitectBacklogs(projectState, requirement, state) {
   };
   
   projectState.saveBacklogsData(backlogsData);
-  console.log(`\n📋 Created ${backlogsData.backlogs.length} backlogs:\n`);
+  Logger.section(`Created ${backlogsData.backlogs.length} backlogs`, '📋');
   
   // Display backlogs
   backlogsData.backlogs.forEach(backlog => {
-    console.log(`   ${backlog.id}. ${backlog.title} [${backlog.priority}]`);
-    console.log(`      ${backlog.description}`);
-    console.log(`      Effort: ${backlog.estimated_effort}`);
+    Logger.command(`${backlog.id}. ${backlog.title} [${backlog.priority}]`);
+    Logger.command(`   ${backlog.description}`);
+    Logger.command(`   Effort: ${backlog.estimated_effort}`);
     if (backlog.dependencies.length > 0) {
-      console.log(`      Depends on: ${backlog.dependencies.join(', ')}`);
+      Logger.command(`   Depends on: ${backlog.dependencies.join(', ')}`);
     }
-    console.log('');
+    console.log(''); // Empty line // Empty line
   });
   
   projectState.appendLog({
@@ -800,7 +811,7 @@ export async function runArchitectBacklogs(projectState, requirement, state) {
  * Run Project Reviewer
  */
 export async function runProjectReviewer(projectState, requirement, state) {
-  console.log('📊 Reviewing project state...');
+  Logger.section('Reviewing project state...', '📊');
   
   const logSummary = projectState.getLogSummary();
   let taskLogContent = '';
@@ -823,10 +834,11 @@ export async function runProjectReviewer(projectState, requirement, state) {
   // Parse review JSON
   const reviewJson = parseAgentResponse(reviewResult, 'Project Reviewer');
   if (reviewJson && reviewJson.recommendation) {
-    console.log('📊 Project Review:');
-    console.log(`  Status: ${reviewJson.project_state.current_status}`);
-    console.log(`  Recommendation: ${reviewJson.recommendation.next_action}`);
-    console.log(`  Details: ${reviewJson.recommendation.description}\n`);
+    Logger.info('Project Review:');
+    Logger.info(`Status: ${reviewJson.project_state.current_status}`, true);
+    Logger.info(`Recommendation: ${reviewJson.recommendation.next_action}`, true);
+    Logger.info(`Details: ${reviewJson.recommendation.description}`, true);
+    console.log(''); // Empty line // Empty line
     
     return reviewJson.recommendation.description;
   }
@@ -838,7 +850,7 @@ export async function runProjectReviewer(projectState, requirement, state) {
  * Run Refactor Analyst
  */
 export async function runRefactorAnalyst(projectState, requirement, state) {
-  console.log('♻️  Analyzing code for refactoring...');
+  Logger.section('Analyzing code for refactoring...', '♻️');
   
   const allFiles = getAllProjectFilesWithContent(projectState.projectPath).join('\n');
   
@@ -860,10 +872,11 @@ export async function runRefactorAnalyst(projectState, requirement, state) {
       isRefactor: true
     }));
     
-    console.log('📋 Refactor Analysis:');
-    console.log(`  Strengths: ${refactorJson.assessment.strengths.length} identified`);
-    console.log(`  Issues: ${refactorJson.assessment.weaknesses.length} found`);
-    console.log(`  Tasks: ${state.tasks.length} refactoring tasks\n`);
+    Logger.info('Refactor Analysis:');
+    Logger.info(`Strengths: ${refactorJson.assessment.strengths.length} identified`, true);
+    Logger.info(`Issues: ${refactorJson.assessment.weaknesses.length} found`, true);
+    Logger.info(`Tasks: ${state.tasks.length} refactoring tasks`, true);
+    console.log(''); // Empty line // Empty line
   } else {
     // Fallback to text parsing
     state.tasks = parseTasks(refactorResult);
@@ -892,7 +905,7 @@ export async function runRefactorAnalyst(projectState, requirement, state) {
  * Run Coder for all tasks
  */
 export async function runCoderTasks(projectState, requirement, state) {
-  console.log('💻 Implementing tasks...\n');
+  Logger.section('Implementing tasks...', '💻');
   
   // Find the first incomplete task based on status
   let startIndex = 0;
@@ -906,19 +919,21 @@ export async function runCoderTasks(projectState, requirement, state) {
   
   // If all tasks are complete, nothing to do
   if (startIndex >= state.tasks.length) {
-    console.log('✅ All tasks already completed\n');
+    Logger.success('All tasks already completed');
+    console.log(''); // Empty line // Empty line
     return;
   }
   
   if (startIndex > 0) {
-    console.log(`📝 Resuming from task ${startIndex + 1} (${state.tasks.length - startIndex} remaining)...\n`);
+    Logger.info(`Resuming from task ${startIndex + 1} (${state.tasks.length - startIndex} remaining)...`);
+    console.log(''); // Empty line // Empty line
     projectState.appendTextLog(`\nResuming from task ${startIndex + 1}`);
   }
   
   for (let i = startIndex; i < state.tasks.length; i++) {
     const task = state.tasks[i];
     
-    console.log(`\n📝 Task ${task.taskNumber} (${i + 1}/${state.tasks.length}): ${task.description}`);
+    Logger.task(task.taskNumber, `${i + 1}/${state.tasks.length}`, task.description);
     projectState.appendTextLog(`\nStarting Task ${task.taskNumber}: ${task.description}`);
     projectState.appendTaskLog('BUILD', `Task ${task.taskNumber}: ${task.description}`);
     
@@ -953,7 +968,7 @@ export async function runCoderTasks(projectState, requirement, state) {
         const filePath = join(projectState.projectPath, file.path);
         ensureDir(filePath);
         writeFileSync(filePath, file.content);
-        console.log(`  ✓ ${existsSync(filePath) ? 'Updated' : 'Created'}: ${file.path}`);
+        Logger.file(existsSync(filePath) ? 'Updated' : 'Created', file.path);
         projectState.appendTextLog(`  ${existsSync(filePath) ? 'Updated' : 'Created'}: ${file.path}`);
       }
       
@@ -969,7 +984,7 @@ export async function runCoderTasks(projectState, requirement, state) {
         filesModified: codeFiles.map(f => f.path)
       });
       
-      console.log(`  ✓ Task ${task.taskNumber} completed`);
+      Logger.taskComplete(task.taskNumber);
       projectState.appendTaskLog('TEST', `Task ${task.taskNumber} ready for testing`);
       
       // Clear last incomplete task on success
@@ -999,14 +1014,15 @@ export async function runCoderTasks(projectState, requirement, state) {
     }
   }
   
-  console.log('\n✅ All tasks completed!\n');
+  Logger.success('All tasks completed!');
+  console.log(''); // Empty line // Empty line
 }
 
 /**
  * Run Coder to fix specific issues
  */
 export async function runCoderFix(projectState, requirement, recommendation, state) {
-  console.log('🔧 Fixing issues...\n');
+  Logger.section('Fixing issues...', '🔧');
   
   const allFiles = getAllProjectFiles(projectState.projectPath)
     .map(f => `File: ${f}\n${readFileSync(join(projectState.projectPath, f), 'utf8')}`)
@@ -1038,11 +1054,12 @@ export async function runCoderFix(projectState, requirement, recommendation, sta
     const filePath = join(projectState.projectPath, file.path);
     ensureDir(filePath);
     writeFileSync(filePath, file.content);
-    console.log(`  ✓ Fixed: ${file.path}`);
+    Logger.file('Fixed', file.path);
     projectState.appendTextLog(`  Fixed: ${file.path}`);
   }
   
-  console.log('\n✅ Fixes applied!\n');
+  Logger.success('Fixes applied!');
+  console.log(''); // Empty line // Empty line
 }
 
 /**
@@ -1053,9 +1070,9 @@ export async function runTests(projectState, projectPath, requirement, state) {
   const testFile = join(projectPath, 'plan-build-test/test/e2e.test.js');
   
   if (!existsSync(testFile) && state.tasks.length > 0) {
-    console.log('🧪 Creating tests...');
-    console.log('📋 Tests will verify functionality works correctly');
-    console.log('');
+    Logger.info('Creating tests...');
+    Logger.info('Tests will verify functionality works correctly');
+    console.log(''); // Empty line // Empty line
     
     projectState.appendTextLog(`\nTester creating validation tests...`);
     
@@ -1080,9 +1097,9 @@ export async function runTests(projectState, projectPath, requirement, state) {
       
       // Show test cases
       if (testJson.test_file.test_cases) {
-        console.log('  Tests included:');
+        Logger.info('Tests included:', true);
         testJson.test_file.test_cases.forEach(tc => {
-          console.log(`    • ${tc.name}`);
+          Logger.command(`• ${tc.name}`);
         });
       }
     } else {
@@ -1094,7 +1111,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
       const filePath = join(projectPath, file.path);
       ensureDir(filePath);
       writeFileSync(filePath, file.content);
-      console.log(`  ✓ Created: ${file.path}`);
+      Logger.file('Created', file.path);
     }
     
     // Ensure package.json and playwright.config.js exist
@@ -1102,7 +1119,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
   }
   
   // Always install dependencies to ensure any new packages are installed
-  console.log('');
+  console.log(''); // Empty line
   try {
     await npmInstall(projectPath);
   } catch (error) {
@@ -1111,7 +1128,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
   }
   
   // Run tests
-  console.log('\n🧪 Running tests...\n');
+  Logger.section('Running tests...', '🧪');
   
   // Kill any existing server on port 3000 first
   await killPort(3000, projectPath);
@@ -1125,7 +1142,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
     });
     
     testOutput = stdout + '\n' + stderr;
-    console.log(stdout);
+    console.log(stdout); // Show test output
     if (stderr) console.error(stderr);
     
     // Log the test output for future use
@@ -1136,11 +1153,11 @@ export async function runTests(projectState, projectPath, requirement, state) {
       details: 'All tests passed successfully'
     });
     
-    console.log('\n✅ All tests passed!');
+    Logger.success('All tests passed!');
     
     // Try to start server
     try {
-      console.log('\n🌐 Starting server...');
+      Logger.section('Starting server...', '🌐');
       const serverProcess = exec('npm start', {
         cwd: projectPath,
         detached: false
@@ -1148,14 +1165,15 @@ export async function runTests(projectState, projectPath, requirement, state) {
       
       await new Promise(resolve => setTimeout(resolve, 2000));
       
-      console.log('\n🎉 Project ready!');
-      console.log(`  URL: http://localhost:3000`);
-      console.log(`  Press Ctrl+C to stop the server\n`);
+      Logger.success('Project ready!');
+      Logger.info('URL: http://localhost:3000', true);
+      Logger.info('Press Ctrl+C to stop the server', true);
+      console.log(''); // Empty line
       
       // Keep process alive
       await new Promise(() => {});
     } catch {
-      console.log('\n✅ Project completed successfully!');
+      Logger.success('Project completed successfully!');
     }
     
   } catch (error) {
@@ -1163,7 +1181,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
     testOutput = (error.stdout || '') + '\n' + (error.stderr || '');
     
     console.error('\n❌ Tests failed!');
-    console.log(error.stdout || error.message);
+    console.log(error.stdout || error.message); // Show error output
     if (error.stderr) console.error(error.stderr);
     
     // Log the test output for future use (for fix-tests command)
@@ -1175,7 +1193,7 @@ export async function runTests(projectState, projectPath, requirement, state) {
       output: testOutput
     });
     
-    console.log('\n💡 Tip: Run "npm run fix-tests" to automatically fix the failing tests');
+    Logger.info('Tip: Run "npm run fix-tests" to automatically fix the failing tests');
     
     process.exit(1);
   }
