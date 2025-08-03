@@ -40,7 +40,7 @@ This is an AI orchestrator that builds working software through a three-step cyc
    - Coordinates the Plan/Review → Build → Test cycle
    - Manages fallback to local analysis when Claude is unavailable
 
-2. **orchestrator-commands.js** - CLI command interface
+2. **orchestrator-cli.js** - CLI command interface
    - Routes user commands to appropriate orchestrator actions
    - Manages current project context (stored in `.current-project`)
    - Handles automatic git commits at strategic checkpoints
