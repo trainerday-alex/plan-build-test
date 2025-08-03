@@ -1,227 +1,39 @@
 #!/usr/bin/env node
 
-import { writeFileSync, mkdirSync, existsSync, readFileSync, readdirSync, appendFileSync, statSync, unlinkSync, rmSync, cpSync } from 'fs';
 import { exec } from 'child_process';
 import { promisify } from 'util';
-import { join, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import dotenv from 'dotenv';
+import { join } from 'path';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync, readdirSync } from 'fs';
 
-dotenv.config();
+// Import shared utilities
+import { PROJECTS_DIR, PLAN_BUILD_TEST_DIR, LOGS_FILENAME, TEXT_LOG_FILENAME, TASK_LOG_FILENAME, EXPRESS_TEMPLATE_NAME, NPM_INSTALL_TIMEOUT, TEST_TIMEOUT } from './src/config.js';
+import { 
+  getProjectPath, getPlanBuildTestPath, ensureDir, ensureDirExists, 
+  readJsonFile, writeJsonFile, getAllProjectFiles, getAllProjectFilesWithContent,
+  copyDirectory, deleteDirectory, cleanupTempFiles, appendTextLog as appendTextLogUtil
+} from './src/file-utils.js';
+import { initializeGit as initGit, autoCommit } from './src/git-utils.js';
+import { log, logSuccess, logError, logWarning, logInfo, logSection, EMOJI } from './src/console-utils.js';
+import { exitWithError, handleClaudeError, ERROR_MESSAGES } from './src/error-handlers.js';
+import { loadTemplate, processTemplate, copyProjectTemplate, createPrompts } from './src/template-utils.js';
+import { 
+  parseAgentResponse, parseTasks, parseFileContent, parseTestFixResponse, 
+  parseBacklogs, parseProjectReview, parseRefactorAnalysis 
+} from './src/agent-parsers.js';
+import { callClaude } from './src/claude-utils.js';
+import { 
+  ensurePackageJson, ensurePlaywrightConfig, ensureTestSetup, 
+  installDependencies, killProcessOnPort, runTests as runTestsUtil, 
+  createTestFile, parseTestOutput 
+} from './src/test-setup-utils.js';
 
 const execAsync = promisify(exec);
-const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const TEMPLATES_DIR = join(process.cwd(), 'templates');
-const AGENTS_DIR = join(process.cwd(), 'agents');
 
-// Utility functions
-export function loadTemplate(templateName) {
-  const templatePath = join(AGENTS_DIR, `${templateName}.md`);
-  try {
-    let content = readFileSync(templatePath, 'utf8');
-    
-    // Strip YAML frontmatter if present (for Basic Memory files)
-    if (content.startsWith('---\n')) {
-      const endOfFrontmatter = content.indexOf('\n---\n', 4);
-      if (endOfFrontmatter !== -1) {
-        content = content.substring(endOfFrontmatter + 5).trim();
-      }
-    }
-    
-    // Also strip any markdown headers that duplicate the template name
-    const lines = content.split('\n');
-    if (lines[0].startsWith('# ') && lines[0].toLowerCase().includes(templateName.toLowerCase())) {
-      lines.shift(); // Remove the first line
-      content = lines.join('\n').trim();
-    }
-    
-    return content;
-  } catch (error) {
-    console.error(`Warning: Could not load template ${templateName}: ${error.message}`);
-    return null;
-  }
-}
+// Export for backward compatibility
+export { loadTemplate };
 
-// Enhanced prompts for task-based approach
-export const PROMPTS = {
-  reviewProject: (projectName, log, requirement, taskLog) => {
-    const template = loadTemplate('project-reviewer');
-    if (template) {
-      return template
-        .replace('${projectName}', projectName)
-        .replace('${requirement}', requirement)
-        .replace('${taskLog}', taskLog || 'No task log yet')
-        .replace('${log}', log);
-    }
-    // Fallback to inline template
-    return `STEP 1: REVIEW
-First, review the project history and current state.
-
-Project: ${projectName}
-Current Requirement: ${requirement}
-
-Task Log (Plan/Build/Test cycles):
-${taskLog || 'No task log yet'}
-
-Detailed Log Summary:
-${log}
-
-Based on this review, provide:
-1) WHAT'S BEEN DONE (completed cycles)
-2) CURRENT STATE (working? broken? needs improvement?)
-3) NEXT ACTION (what should we plan next?)
-
-Reply with plain text only.`;
-  },
-
-  architect: (req) => {
-    const template = loadTemplate('architect');
-    if (template) {
-      return template.replace('${requirement}', req);
-    }
-    // Fallback to inline template
-    return `As a software architect, create a task-based blueprint for: "${req}".
-
-Do NOT use any tools. Provide:
-
-1) RUNTIME REQUIREMENTS
-- What needs to run for this to work? (web server, database, etc.)
-- How will we test it end-to-end?
-
-2) TASK LIST (numbered, in order)
-Each task should be:
-- Independently testable
-- Have clear success criteria
-- Build towards the final goal
-
-Format:
-1. Task description (test: how to verify)
-2. Task description (test: how to verify)
-
-3) FILE STRUCTURE
-List all files needed with their purpose
-
-4) FINAL VALIDATION TEST
-Describe the Playwright test that proves everything works
-
-Reply with plain text only.`;
-  },
-  
-  coder: (req, task, allFiles) => {
-    const template = loadTemplate('coder');
-    if (template) {
-      return template
-        .replace('${task}', task)
-        .replace('${requirement}', req)
-        .replace('${allFiles}', allFiles ? `Current project files:\n${allFiles}\n` : '');
-    }
-    // Fallback to inline template
-    return `As a coder, implement this specific task: "${task}"
-
-Original requirement: "${req}"
-
-${allFiles ? `Current project files:\n${allFiles}\n` : ''}
-
-Do NOT use any tools. Provide:
-1) Files to create/modify with paths
-2) Complete code in markdown blocks
-3) How to test this step works
-
-Example format:
-**src/index.js**
-\`\`\`javascript
-// code here
-\`\`\`
-
-**Test this step:**
-Open index.html in browser and verify form displays
-
-Reply with plain text only.`;
-  },
-  
-  finalTest: (req, projectPath, architectPlan = null, implementationFiles = null) => {
-    const template = loadTemplate('tester');
-    if (template) {
-      let prompt = template.replace('${requirement}', req);
-      
-      // Add architect's test strategy if available
-      if (architectPlan && architectPlan.final_validation) {
-        const testStrategy = `\n\nArchitect's Test Strategy:\n${JSON.stringify(architectPlan.final_validation, null, 2)}`;
-        prompt = prompt.replace('Create ONE test file', `Create ONE test file based on the architect's strategy.${testStrategy}\n\nCreate ONE test file`);
-      }
-      
-      // Add implementation files so Tester can see what was actually built
-      if (implementationFiles) {
-        const implSection = `\n\nActual Implementation Files:\n${implementationFiles}\n\nIMPORTANT: Write tests that match the ACTUAL implementation above, not just the requirements.`;
-        prompt = prompt.replace('Do NOT use any tools.', implSection + '\n\nDo NOT use any tools.');
-      }
-      
-      return prompt;
-    }
-    // Fallback to inline template
-    return `Create a simple Playwright test for: "${req}"
-
-The web server will be started automatically by Playwright config.
-
-Test BASIC USER-FACING FUNCTIONALITY - what users can DO and SEE.
-NO implementation details or internal state checks.
-
-Examples of good tests:
-- User fills form and sees success message
-- Item appears in list after adding
-- Error shows for invalid input
-
-Do NOT use any tools. TEXT-ONLY response.
-
-Provide:
-**plan-build-test/test/e2e.test.js**
-\`\`\`javascript
-// your test code here
-\`\`\`
-
-Reply with plain text only.`;
-  },
-  
-  refactorAnalyst: (req, allFiles) => {
-    const template = loadTemplate('refactor-analyst');
-    if (template) {
-      return template
-        .replace('${requirement}', req)
-        .replace('${allFiles}', allFiles || 'No files found');
-    }
-    // Fallback to inline template
-    return `As a refactor analyst, analyze the existing code for: "${req}"
-
-Current project files:
-${allFiles || 'No files found'}
-
-Do NOT use any tools. Provide:
-
-1) CODE QUALITY ASSESSMENT
-- What works well (keep these patterns)
-- What needs improvement (refactor these)
-- Any code smells or anti-patterns
-
-2) REFACTORING TASKS (numbered, in order)
-Each task should:
-- Target a specific improvement
-- Maintain existing functionality
-- Be independently testable
-
-Format:
-1. Refactor description (what and why)
-2. Refactor description (what and why)
-
-3) EXPECTED IMPROVEMENTS
-- Performance gains
-- Better maintainability
-- Cleaner architecture
-- Reduced complexity
-
-Reply with plain text only.`;
-  }
-};
+// Create PROMPTS object using template utilities
+export const PROMPTS = createPrompts();
 
 // Project state management
 export class ProjectState {
@@ -325,33 +137,22 @@ export class ProjectState {
   
   // Sync task counter with the highest task number in logs
   syncTaskCounter() {
-    if (existsSync(this.logFile)) {
-      try {
-        const log = JSON.parse(readFileSync(this.logFile, 'utf8'));
-        const createTaskEntries = log.filter(e => e.action === 'CREATE_TASK' && e.taskNumber);
-        if (createTaskEntries.length > 0) {
-          const maxTaskNumber = Math.max(...createTaskEntries.map(e => e.taskNumber));
-          this.currentTaskNumber = maxTaskNumber;
-          console.log(`[DEBUG] Synced task counter to: ${this.currentTaskNumber}`);
-        } else {
-          this.currentTaskNumber = 0;
-          console.log(`[DEBUG] No CREATE_TASK entries found, reset counter to 0`);
-        }
-      } catch (e) {
+    const log = readJsonFile(this.logFile);
+    if (log) {
+      const createTaskEntries = log.filter(e => e.action === 'CREATE_TASK' && e.taskNumber);
+      if (createTaskEntries.length > 0) {
+        const maxTaskNumber = Math.max(...createTaskEntries.map(e => e.taskNumber));
+        this.currentTaskNumber = maxTaskNumber;
+      } else {
         this.currentTaskNumber = 0;
-        console.log(`[DEBUG] Error syncing task counter, reset to 0: ${e.message}`);
       }
     } else {
       this.currentTaskNumber = 0;
-      console.log(`[DEBUG] No log file, task counter at 0`);
     }
   }
 
   appendLog(entry) {
-    let log = [];
-    if (existsSync(this.logFile)) {
-      log = JSON.parse(readFileSync(this.logFile, 'utf8'));
-    }
+    let log = readJsonFile(this.logFile) || [];
     
     log.push({
       timestamp: new Date().toISOString(),
@@ -359,15 +160,11 @@ export class ProjectState {
       ...entry
     });
     
-    ensureDir(this.logFile);
-    writeFileSync(this.logFile, JSON.stringify(log, null, 2));
+    writeJsonFile(this.logFile, log);
   }
 
   getLog() {
-    if (existsSync(this.logFile)) {
-      return JSON.parse(readFileSync(this.logFile, 'utf8'));
-    }
-    return [];
+    return readJsonFile(this.logFile) || [];
   }
 
   getLogSummary() {
@@ -379,28 +176,13 @@ export class ProjectState {
 
   // New method to append to text log file
   appendTextLog(message, includeTimestamp = true) {
-    ensureDir(this.textLogFile);
-    const timestamp = new Date().toISOString();
-    const logEntry = includeTimestamp ? `[${timestamp}] ${message}\n` : `${message}\n`;
-    
-    if (existsSync(this.textLogFile)) {
-      appendFileSync(this.textLogFile, logEntry);
-    } else {
-      writeFileSync(this.textLogFile, logEntry);
-    }
+    appendTextLogUtil(this.textLogFile, message, includeTimestamp);
   }
 
   // Append to task log
   appendTaskLog(cycle, message) {
-    ensureDir(this.taskLogFile);
     const timestamp = new Date().toISOString();
-    const logEntry = `[${timestamp}] ${cycle}: ${message}\n`;
-    
-    if (existsSync(this.taskLogFile)) {
-      appendFileSync(this.taskLogFile, logEntry);
-    } else {
-      writeFileSync(this.taskLogFile, logEntry);
-    }
+    appendTextLogUtil(this.taskLogFile, `${cycle}: ${message}`, true);
   }
   
   // Get the last incomplete task index from logs
@@ -431,374 +213,16 @@ export class ProjectState {
   }
 }
 
-// Create directory if it doesn't exist
-export function ensureDir(filePath) {
-  const dir = dirname(filePath);
-  if (!existsSync(dir)) {
-    mkdirSync(dir, { recursive: true });
-  }
+
+async function callClaudeWrapper(prompt, role, projectState = null, retryCount = 0) {
+  return callClaude(prompt, role, projectState, retryCount);
 }
 
-export async function callClaude(prompt, role, projectState = null, retryCount = 0) {
-  const maxRetries = 2;
-  
-  console.log(`  → Calling ${role}...${retryCount > 0 ? ` (retry ${retryCount}/${maxRetries})` : ''}`);
-  if (projectState) {
-    projectState.appendTextLog(`Calling ${role}...${retryCount > 0 ? ` (retry ${retryCount})` : ''}`);
-    projectState.appendTextLog(`Prompt: ${prompt.substring(0, 500)}...`, false);
-  }
-  
-  // Ensure .tmp directory exists
-  const tmpDir = join(process.cwd(), '.tmp');
-  if (!existsSync(tmpDir)) {
-    mkdirSync(tmpDir, { recursive: true });
-  }
-  
-  // Clean up old temp files (older than 1 hour)
-  try {
-    const files = readdirSync(tmpDir);
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    files.forEach(file => {
-      if (file.startsWith('.claude-prompt-') && file.endsWith('.txt')) {
-        const filePath = join(tmpDir, file);
-        const stats = statSync(filePath);
-        if (stats.mtimeMs < oneHourAgo) {
-          unlinkSync(filePath);
-        }
-      }
-    });
-  } catch (e) {
-    // Ignore cleanup errors
-  }
-  
-  const tmpFile = join(tmpDir, `.claude-prompt-${Date.now()}.txt`);
-  
-  try {
-    writeFileSync(tmpFile, prompt);
-    
-    // Check if file was written successfully
-    if (!existsSync(tmpFile)) {
-      throw new Error('Failed to write prompt file');
-    }
-    
-    // Check file size
-    const fileStats = statSync(tmpFile);
-    console.log(`  → Prompt file size: ${(fileStats.size / 1024).toFixed(2)} KB`);
-    
-    // Skip the test command since Claude CLI is working normally
-    
-    // Read the file content first
-    const promptContent = readFileSync(tmpFile, 'utf8');
-    
-    // Try running claude with the content directly using spawn for better control
-    const { spawn } = await import('child_process');
-    
-    let stdout = '';
-    let stderr = '';
-    let timedOut = false;
-    
-    const claudeProcess = spawn('claude', ['-p'], {
-      stdio: ['pipe', 'pipe', 'pipe']
-    });
-    
-    // Set timeout
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      claudeProcess.kill('SIGTERM');
-    }, 120000); // 120 seconds timeout (increased from 60)
-    
-    // Send the prompt content to stdin
-    claudeProcess.stdin.write(promptContent);
-    claudeProcess.stdin.end();
-    
-    // Collect output
-    claudeProcess.stdout.on('data', (data) => {
-      stdout += data.toString();
-    });
-    
-    claudeProcess.stderr.on('data', (data) => {
-      stderr += data.toString();
-    });
-    
-    // Wait for process to complete
-    await new Promise((resolve, reject) => {
-      claudeProcess.on('close', (code) => {
-        clearTimeout(timeout);
-        
-        if (timedOut) {
-          reject(new Error('Claude process timed out after 120 seconds'));
-        } else if (code !== 0) {
-          const error = new Error(`Claude process exited with code ${code}`);
-          error.code = code;
-          error.stdout = stdout;
-          error.stderr = stderr;
-          reject(error);
-        } else {
-          resolve();
-        }
-      });
-      
-      claudeProcess.on('error', (err) => {
-        clearTimeout(timeout);
-        reject(err);
-      });
-    });
-    
-    // Check for empty response
-    if (!stdout || stdout.trim().length === 0) {
-      console.error('  ❌ Empty response from Claude');
-      throw new Error('Empty response from Claude CLI');
-    }
-    
-    // Clean up temp file
-    try { 
-      unlinkSync(tmpFile); 
-    } catch {}
-    
-    console.log(`  ← ${role} completed`);
-    if (projectState) {
-      projectState.appendTextLog(`${role} completed successfully`);
-      projectState.appendTextLog(`Response length: ${stdout.length} characters`, false);
-    }
-    return stdout.trim();
-  } catch (error) {
-    console.error(`  ❌ ${role} error:`, error.message);
-    
-    // More detailed error logging
-    if (error.code === 'ENOENT') {
-      console.error('  ❌ Command not found - is Claude CLI installed?');
-    } else if (error.message.includes('timed out')) {
-      console.error('  ❌ Request timed out after 120 seconds');
-    } else if (error.stderr || stderr) {
-      console.error('  ❌ Error output:', error.stderr || stderr);
-    }
-    
-    if (error.stdout || stdout) {
-      console.error('  ℹ️  Partial output received:', (error.stdout || stdout).substring(0, 200) + '...');
-    }
-    
-    if (projectState) {
-      projectState.appendTextLog(`ERROR: ${role} failed - ${error.message}`);
-      projectState.appendTextLog(`Error code: ${error.code || 'unknown'}`, false);
-      projectState.appendTextLog(`Failed prompt saved to: ${tmpFile}`, false);
-    }
-    
-    // Save failed prompt for debugging
-    console.error(`  💾 Failed prompt saved to: ${tmpFile}`);
-    console.error(`  📋 To retry manually: cat "${tmpFile}" | claude -p`);
-    
-    // Show a preview of the prompt for debugging
-    try {
-      const promptPreview = promptContent.substring(0, 300).replace(/\n/g, '\n     ');
-      console.error(`  📄 Prompt preview (first 300 chars):`);
-      console.error(`     ${promptPreview}...`);
-    } catch (readError) {
-      console.error(`  ❌ Could not show prompt preview`);
-    }
-    
-    // Don't delete file on error for debugging
-    
-    // Retry on certain errors
-    if (retryCount < maxRetries && 
-        (error.message.includes('timed out') || 
-         error.message.includes('ECONNRESET') ||
-         error.message.includes('Empty response'))) {
-      console.log(`  🔄 Retrying in 5 seconds...`);
-      await new Promise(resolve => setTimeout(resolve, 5000));
-      return callClaude(prompt, role, projectState, retryCount + 1);
-    }
-    
-    throw error;
-  }
-}
 
-// Parse JSON response with fallback to text parsing
-export function parseAgentResponse(response, agentType) {
-  // Try to extract JSON from the response
-  const jsonMatch = response.match(/```json\s*\n([\s\S]*?)\n\s*```/);
-  if (jsonMatch) {
-    try {
-      const json = JSON.parse(jsonMatch[1]);
-      if (json.status === 'FAILURE') {
-        throw new Error(json.error || 'Agent returned failure status');
-      }
-      return json;
-    } catch (e) {
-      console.warn(`Failed to parse JSON from ${agentType}: ${e.message}`);
-    }
-  }
-  
-  // Try direct JSON parse
-  try {
-    const json = JSON.parse(response);
-    if (json.status === 'FAILURE') {
-      throw new Error(json.error || 'Agent returned failure status');
-    }
-    return json;
-  } catch (e) {
-    // Fall back to text parsing
-    console.warn(`${agentType} response is not valid JSON, using text parsing`);
-    return null;
-  }
-}
 
-// Extract tasks from architect response
-export function parseTasks(architectResponse) {
-  // Try JSON parsing first
-  const json = parseAgentResponse(architectResponse, 'Architect');
-  if (json && json.tasks) {
-    return json.tasks.map(task => ({
-      description: task.description,
-      test: task.test_command || 'verify manually'
-    }));
-  }
-  
-  // Fallback to text parsing
-  const tasks = [];
-  const lines = architectResponse.split('\n');
-  let inTaskSection = false;
-  
-  for (const line of lines) {
-    if (line.includes('TASK LIST') || line.includes('REFACTORING TASKS')) {
-      inTaskSection = true;
-      continue;
-    }
-    
-    if (inTaskSection && line.match(/^\d+\./)) {
-      const match = line.match(/^\d+\.\s*(.+?)(?:\s*\(test:\s*(.+?)\))?$/);
-      if (match) {
-        tasks.push({
-          description: match[1].trim(),
-          test: match[2] ? match[2].trim() : 'verify manually'
-        });
-      }
-    }
-    
-    // Stop at next section
-    if (inTaskSection && line.match(/^[A-Z\s]+:/) && !line.includes('TASK')) {
-      break;
-    }
-  }
-  
-  return tasks;
-}
 
-// Extract file content from coder responses
-export function parseFileContent(response) {
-  // Try JSON parsing first
-  const json = parseAgentResponse(response, 'Coder');
-  if (json && json.files) {
-    return json.files.map(file => ({
-      path: file.path,
-      content: file.content
-    }));
-  }
-  
-  // Fallback to text parsing
-  const files = [];
-  const lines = response.split('\n');
-  let currentFile = null;
-  let inCodeBlock = false;
-  let codeContent = [];
-  
-  for (const line of lines) {
-    // Check for file path patterns
-    if (line.match(/^(src\/|test\/|tests\/|lib\/|\.\/)?[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)$/i) || 
-        line.match(/^\*\*[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)\*\*/) ||
-        line.match(/^#+\s*[\w\-\/]+\.(js|json|md|html|css|jsx|ts|tsx)/)) {
-      if (currentFile && codeContent.length > 0) {
-        files.push({ path: currentFile, content: codeContent.join('\n') });
-      }
-      currentFile = line.replace(/[\*#\s]+/g, '').trim();
-      codeContent = [];
-    }
-    
-    // Track code blocks
-    if (line.startsWith('```')) {
-      inCodeBlock = !inCodeBlock;
-      if (!inCodeBlock && currentFile && codeContent.length > 0) {
-        files.push({ path: currentFile, content: codeContent.join('\n') });
-        currentFile = null;
-        codeContent = [];
-      }
-    } else if (inCodeBlock && currentFile) {
-      codeContent.push(line);
-    }
-  }
-  
-  // Handle last file
-  if (currentFile && codeContent.length > 0) {
-    files.push({ path: currentFile, content: codeContent.join('\n') });
-  }
-  
-  return files;
-}
 
-// Get list of all project files
-export function getAllProjectFiles(projectPath) {
-  const files = [];
-  
-  function scanDir(dir, prefix = '') {
-    if (!existsSync(dir)) return;
-    
-    const entries = readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      if (entry.isDirectory() && !['node_modules', '.git', 'plan-build-test'].includes(entry.name)) {
-        scanDir(join(dir, entry.name), join(prefix, entry.name));
-      } else if (entry.isFile() && !entry.name.startsWith('.')) {
-        files.push(join(prefix, entry.name));
-      }
-    }
-  }
-  
-  scanDir(projectPath);
-  return files;
-}
 
-// Get all project files with their contents
-export function getAllProjectFilesWithContent(projectPath) {
-  const files = getAllProjectFiles(projectPath);
-  const filesWithContent = [];
-  
-  for (const file of files) {
-    try {
-      const fullPath = join(projectPath, file);
-      const content = readFileSync(fullPath, 'utf8');
-      filesWithContent.push(`\n=== File: ${file} ===\n${content}`);
-    } catch (err) {
-      // Skip files that can't be read
-    }
-  }
-  
-  return filesWithContent;
-}
-
-export function cleanupTempFiles() {
-  const tmpDir = join(process.cwd(), '.tmp');
-  if (!existsSync(tmpDir)) return;
-  
-  try {
-    const files = readdirSync(tmpDir);
-    let cleaned = 0;
-    
-    files.forEach(file => {
-      if (file.startsWith('.claude-prompt-') && file.endsWith('.txt')) {
-        try {
-          unlinkSync(join(tmpDir, file));
-          cleaned++;
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-      }
-    });
-    
-    if (cleaned > 0) {
-      console.log(`🧹 Cleaned up ${cleaned} temporary files`);
-    }
-  } catch (e) {
-    // Ignore cleanup errors
-  }
-}
 
 /**
  * Main orchestrator function with command-based flow
@@ -913,7 +337,7 @@ async function executeCreateProject(projectState, requirement, state) {
   await copyTemplateFiles(projectState);
   
   // Initialize git
-  await initializeGit(projectState);
+  await initializeGitWrapper(projectState);
   
   // Run Architect to create backlogs
   await runArchitectBacklogs(projectState, requirement, state);
@@ -930,38 +354,30 @@ async function executeCreateProject(projectState, requirement, state) {
  * Copy files from express-app template
  */
 async function copyTemplateFiles(projectState) {
-  console.log('📁 Setting up project template...');
+  log(EMOJI.folder, 'Setting up project template...');
   
-  const templatePath = join(TEMPLATES_DIR, 'express-app');
   const projectPath = projectState.projectPath;
   
-  if (!existsSync(templatePath)) {
-    console.log('  ⚠️  Template not found, skipping template copy');
-    return;
-  }
-  
-  try {
-    // Copy all template files to project directory
-    cpSync(templatePath, projectPath, { recursive: true });
-    console.log('  ✓ Copied Express app template');
+  if (copyProjectTemplate(EXPRESS_TEMPLATE_NAME, projectPath)) {
+    logSuccess('Copied Express app template');
     
     // Update package.json with project name
     const packagePath = join(projectPath, 'package.json');
     if (existsSync(packagePath)) {
-      const packageContent = JSON.parse(readFileSync(packagePath, 'utf8'));
-      packageContent.name = projectPath.split('/').pop();
-      writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
-      console.log('  ✓ Updated package.json with project name');
+      const packageContent = readJsonFile(packagePath);
+      if (packageContent) {
+        packageContent.name = projectPath.split('/').pop();
+        writeJsonFile(packagePath, packageContent);
+        logSuccess('Updated package.json with project name');
+      }
     }
     
     projectState.appendLog({
       action: 'TEMPLATE_COPIED',
       details: 'Express app template files copied successfully'
     });
-    
-  } catch (error) {
-    console.log(`  ⚠️  Template copy failed: ${error.message}`);
-    projectState.appendTextLog(`WARNING: Template copy failed - ${error.message}`);
+  } else {
+    logWarning('Template not found, skipping template copy');
   }
 }
 
@@ -1362,55 +778,21 @@ Respond with JSON:
 /**
  * Initialize git repository
  */
-async function initializeGit(projectState) {
+async function initializeGitWrapper(projectState) {
   const projectPath = projectState.projectPath;
   
   try {
-    console.log('🔧 Initializing git repository...');
+    const success = await initGit(projectPath);
     
-    // Check if git already initialized
-    try {
-      await execAsync('git status', { cwd: projectPath });
-      console.log('  ✓ Git already initialized');
-      return;
-    } catch {
-      // Git not initialized, proceed
-    }
-    
-    // Initialize git
-    await execAsync('git init', { cwd: projectPath });
-    console.log('  ✓ Initialized git repository');
-    
-    // Check if .gitignore exists from template, if not create it
-    const gitignorePath = join(projectPath, '.gitignore');
-    if (!existsSync(gitignorePath)) {
-      const gitignoreContent = `node_modules/
-dist/
-*.log
-.DS_Store
-.env
-plan-build-test/logs.json
-plan-build-test/log.txt
-plan-build-test/task-log.txt
-`;
-      writeFileSync(gitignorePath, gitignoreContent);
-      console.log('  ✓ Created .gitignore');
+    if (success) {
+      projectState.appendLog({
+        action: 'GIT_INITIALIZED',
+        details: 'Created git repo and .gitignore with initial commit'
+      });
     } else {
-      console.log('  ✓ Using .gitignore from template');
+      projectState.appendTextLog(`WARNING: Git init failed`);
     }
-    
-    // Initial commit
-    await execAsync('git add -A', { cwd: projectPath });
-    await execAsync('git commit -m "Initial commit"', { cwd: projectPath });
-    console.log('  ✓ Created initial commit\n');
-    
-    projectState.appendLog({
-      action: 'GIT_INITIALIZED',
-      details: 'Created git repo and .gitignore with initial commit'
-    });
-    
   } catch (error) {
-    console.log('  ⚠️  Git init failed (git may not be installed)\n');
     projectState.appendTextLog(`WARNING: Git init failed - ${error.message}`);
   }
 }
@@ -1773,7 +1155,7 @@ async function runTests(projectState, projectPath, requirement, state) {
     }
     
     // Ensure package.json and playwright.config.js exist
-    await ensureTestSetup(projectPath, projectState);
+    await ensureTestSetupWrapper(projectPath, projectState);
   }
   
   // Always install dependencies to ensure any new packages are installed
@@ -2179,79 +1561,6 @@ async function executeProcessBacklog(projectState, requirement, state) {
 /**
  * Ensure test setup files exist
  */
-async function ensureTestSetup(projectPath, projectState) {
-  // Check for package.json and ensure test scripts
-  const packagePath = join(projectPath, 'package.json');
-  let packageContent;
-  
-  if (existsSync(packagePath)) {
-    // Read existing package.json
-    packageContent = JSON.parse(readFileSync(packagePath, 'utf8'));
-    
-    // Ensure test scripts exist
-    if (!packageContent.scripts) {
-      packageContent.scripts = {};
-    }
-    if (!packageContent.scripts.test) {
-      packageContent.scripts.test = "playwright test";
-      packageContent.scripts["test:ui"] = "playwright test --ui";
-    }
-    
-    // Ensure playwright is in devDependencies
-    if (!packageContent.devDependencies) {
-      packageContent.devDependencies = {};
-    }
-    if (!packageContent.devDependencies["@playwright/test"]) {
-      packageContent.devDependencies["@playwright/test"] = "^1.40.0";
-    }
-    
-    // Write back
-    writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
-    console.log('  ✓ Updated: package.json (added test scripts)');
-  } else {
-    // Create new package.json
-    packageContent = {
-      name: projectPath.split('/').pop(),
-      version: "1.0.0",
-      type: "module",
-      scripts: {
-        start: "node server.js",
-        test: "playwright test",
-        "test:ui": "playwright test --ui"
-      },
-      devDependencies: {
-        "@playwright/test": "^1.40.0"
-      },
-      dependencies: {
-        "express": "^4.18.2"
-      }
-    };
-    writeFileSync(packagePath, JSON.stringify(packageContent, null, 2));
-    console.log('  ✓ Created: package.json');
-  }
-  
-  // Check for playwright.config.js
-  const playwrightPath = join(projectPath, 'playwright.config.js');
-  if (!existsSync(playwrightPath)) {
-    const configContent = `import { defineConfig } from '@playwright/test';
-
-export default defineConfig({
-  testDir: './test',
-  timeout: 30000,
-  use: {
-    baseURL: 'http://localhost:3000/plan-build-test',
-    trace: 'on-first-retry',
-  },
-  webServer: {
-    command: 'npm start',
-    port: 3000,
-    reuseExistingServer: !process.env.CI,
-    timeout: 10000,
-    stderr: 'pipe',
-    stdout: 'pipe',
-  },
-});`;
-    writeFileSync(playwrightPath, configContent);
-    console.log('  ✓ Created: playwright.config.js');
-  }
+async function ensureTestSetupWrapper(projectPath, projectState) {
+  await ensureTestSetup(projectPath);
 }

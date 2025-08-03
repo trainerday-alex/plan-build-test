@@ -1,76 +1,38 @@
 #!/usr/bin/env node
 
 import { runOrchestratorNew } from './orchestrator.js';
-import { existsSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
 import { exec } from 'child_process';
-import { promisify } from 'util';
-import dotenv from 'dotenv';
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
 
-dotenv.config();
+// Import shared utilities
+import { PROJECTS_DIR } from './src/config.js';
+import { getProjectPath, readJsonFile } from './src/file-utils.js';
+import { autoCommit } from './src/git-utils.js';
+import { getCurrentProject, setCurrentProject, requireCurrentProject, validateProjectExists, getProjectStatus } from './src/project-manager.js';
+import { log, logSuccess, logError, logSection, logListItem, logCheckbox, EMOJI } from './src/console-utils.js';
+import { exitWithError, validateArgs, wrapAsync, ERROR_MESSAGES } from './src/error-handlers.js';
 
-const execAsync = promisify(exec);
-const PROJECTS_DIR = process.env.PROJECTS_DIR || join(process.cwd(), 'projects');
-const CURRENT_PROJECT_FILE = join(process.cwd(), '.current-project');
-
-// Get current project
-function getCurrentProject() {
-  if (existsSync(CURRENT_PROJECT_FILE)) {
-    return readFileSync(CURRENT_PROJECT_FILE, 'utf8').trim();
-  }
-  return null;
-}
-
-// Set current project
-function setCurrentProject(projectName) {
-  writeFileSync(CURRENT_PROJECT_FILE, projectName);
-}
-
-// Auto commit changes
-async function autoCommit(projectPath, message) {
-  try {
-    // Check if git is initialized
-    await execAsync('git status', { cwd: projectPath });
-    
-    // Add all changes
-    await execAsync('git add -A', { cwd: projectPath });
-    
-    // Check if there are changes to commit
-    const { stdout } = await execAsync('git status --porcelain', { cwd: projectPath });
-    if (stdout.trim()) {
-      // Commit changes
-      await execAsync(`git commit -m "${message}"`, { cwd: projectPath });
-      console.log(`  ✓ Committed: ${message}`);
-    } else {
-      console.log('  ✓ No changes to commit');
-    }
-  } catch (error) {
-    console.log('  ⚠️  Git commit failed (git may not be initialized)');
-  }
-}
 
 // Main command handler
-async function main() {
+const main = wrapAsync(async () => {
   const command = process.argv[2];
   const args = process.argv.slice(3);
 
   switch (command) {
     case 'create-project':
     case 'new-project': // Keep for backward compatibility
-      if (args.length < 2) {
-        console.error('Usage: npm run new-project <name> <description>');
-        process.exit(1);
-      }
+      validateArgs(args, 2, ERROR_MESSAGES.COMMAND_USAGE.CREATE_PROJECT);
       const projectName = args[0];
       const description = args.slice(1).join(' ');
       
-      console.log('\n🚀 Creating new project...\n');
-      console.log('Setup Phase:');
-      console.log('  - Create project folder');
-      console.log('  - Initialize git repository');
-      console.log('  - Create .gitignore');
-      console.log('  - Set as current project');
-      console.log('  - Initialize logs\n');
+      log(EMOJI.rocket, 'Creating new project...\n');
+      logSection('Setup Phase:');
+      logListItem('Create project folder');
+      logListItem('Initialize git repository');
+      logListItem('Create .gitignore');
+      logListItem('Set as current project');
+      logListItem('Initialize logs\n');
       
       setCurrentProject(projectName);
       
@@ -79,22 +41,15 @@ async function main() {
       break;
 
     case 'backlog':
-      if (args.length < 1) {
-        console.error('Usage: npm run backlog <backlog-description>');
-        process.exit(1);
-      }
-      const currentProject = getCurrentProject();
-      if (!currentProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
+      validateArgs(args, 1, ERROR_MESSAGES.COMMAND_USAGE.BACKLOG);
+      const currentProject = requireCurrentProject();
       const backlogDescription = args.join(' ');
-      const backlogProjectPath = join(PROJECTS_DIR, currentProject);
+      const backlogProjectPath = getProjectPath(currentProject);
       
-      console.log(`\n📋 Adding new backlog item to ${currentProject}...`);
+      log(EMOJI.clipboard, `Adding new backlog item to ${currentProject}...`);
       
       // Commit current state before starting new backlog
-      console.log('\n📦 Committing current state...');
+      log(EMOJI.package, 'Committing current state...');
       await autoCommit(backlogProjectPath, `Before backlog: ${backlogDescription.substring(0, 50)}...`);
       
       console.log('\nAdding backlog item...\n');
@@ -102,17 +57,13 @@ async function main() {
       break;
 
     case 'process-backlog':
-      const processProject = getCurrentProject();
-      if (!processProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
+      const processProject = requireCurrentProject();
       const backlogId = args[0];
       if (!backlogId) {
-        console.log('\n📋 Processing next backlog item...');
+        log(EMOJI.clipboard, 'Processing next backlog item...');
         await runOrchestratorNew(processProject, 'Process next backlog item', 'process-backlog');
       } else {
-        console.log(`\n📋 Processing backlog item #${backlogId}...`);
+        log(EMOJI.clipboard, `Processing backlog item #${backlogId}...`);
         await runOrchestratorNew(processProject, `Process backlog item #${backlogId}`, 'process-backlog', { backlogId });
       }
       break;
@@ -144,53 +95,46 @@ async function main() {
       break;
 
     case 'help':
-      console.log('\n📚 Plan-Build-Test Orchestrator Commands\n');
-      console.log('Project Management:');
-      console.log('  npm run create-project <name> <description>  - Create new project with backlogs');
-      console.log('  npm run change-project <name>                - Switch to existing project');
-      console.log('  npm run status                               - Show current project status');
-      console.log('  npm run start-project                        - Start the web server\n');
+      logSection('Plan-Build-Test Orchestrator Commands');
+      
+      console.log('\nProject Management:');
+      logListItem('npm run create-project <name> <description>  - Create new project with backlogs');
+      logListItem('npm run change-project <name>                - Switch to existing project');
+      logListItem('npm run status                               - Show current project status');
+      logListItem('npm run start-project                        - Start the web server\n');
       
       console.log('Backlog Management:');
-      console.log('  npm run show-backlogs                        - List all backlogs with status');
-      console.log('  npm run process-backlog [id]                 - Work on next (or specific) backlog');
-      console.log('  npm run backlog <description>                - Add new backlog item');
-      console.log('  npm run reset-backlog <id>                   - Reset stuck backlog to pending\n');
+      logListItem('npm run show-backlogs                        - List all backlogs with status');
+      logListItem('npm run process-backlog [id]                 - Work on next (or specific) backlog');
+      logListItem('npm run backlog <description>                - Add new backlog item');
+      logListItem('npm run reset-backlog <id>                   - Reset stuck backlog to pending\n');
       
       console.log('Development:');
-      console.log('  npm run fix                                  - Fix failing tests');
-      console.log('  npm run fix-tests                            - Update tests to match implementation');
-      console.log('  npm run refactor                             - Improve code quality\n');
+      logListItem('npm run fix                                  - Fix failing tests');
+      logListItem('npm run fix-tests                            - Update tests to match implementation');
+      logListItem('npm run refactor                             - Improve code quality\n');
       
       console.log('Legend:');
-      console.log('  ✅ Completed backlog');
-      console.log('  ⬜ Pending backlog');
-      console.log('  🔄 In progress\n');
+      logListItem(`${EMOJI.success} Completed backlog`);
+      logListItem('⬜ Pending backlog');
+      logListItem(`${EMOJI.loading} In progress\n`);
       break;
 
     case 'fix':
-      const fixProject = getCurrentProject();
-      if (!fixProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
+      const fixProject = requireCurrentProject();
       console.log(`\n🔧 Fixing issues in ${fixProject}...`);
       console.log('Running: Plan → Build → Test\n');
       await runOrchestratorNew(fixProject, 'Fix failing tests and resolve issues', 'fix');
       break;
 
     case 'refactor':
-      const refactorProject = getCurrentProject();
-      if (!refactorProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
-      const refactorProjectPath = join(PROJECTS_DIR, refactorProject);
+      const refactorProject = requireCurrentProject();
+      const refactorProjectPath = getProjectPath(refactorProject);
       
-      console.log(`\n♻️  Refactoring ${refactorProject}...`);
+      log(EMOJI.recycle, `Refactoring ${refactorProject}...`);
       
       // Commit current state before refactoring
-      console.log('\n📦 Committing current state...');
+      log(EMOJI.package, 'Committing current state...');
       await autoCommit(refactorProjectPath, 'Before refactor');
       
       console.log('\nRunning: Plan → Build → Test\n');
@@ -254,102 +198,67 @@ async function main() {
       break;
 
     case 'status':
-      const statusProject = getCurrentProject();
-      if (!statusProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
+      const statusProject = requireCurrentProject();
+      const statusProjectPath = getProjectPath(statusProject);
       
-      console.log(`\n📊 Status for project: ${statusProject}\n`);
+      log(EMOJI.chart, `Status for project: ${statusProject}\n`);
       
-      const statusProjectPath = join(PROJECTS_DIR, statusProject);
-      const logFile = join(statusProjectPath, 'plan-build-test', 'logs.json');
+      const projectStatus = getProjectStatus(statusProjectPath);
       
-      if (!existsSync(logFile)) {
-        console.log('No log file found. Project may be new or not initialized.');
+      if (!projectStatus.exists) {
+        console.log(projectStatus.message || 'No log file found.');
         process.exit(0);
       }
       
-      try {
-        const logs = JSON.parse(readFileSync(logFile, 'utf8'));
-        
-        // Extract tasks and completion status from logs
-        const taskMap = new Map();
-        const requirements = new Set();
-        
-        logs.forEach(entry => {
-          if (entry.action === 'CREATE_TASK') {
-            taskMap.set(entry.taskNumber, {
-              number: entry.taskNumber,
-              description: entry.description,
-              status: 'pending',
-              requirement: entry.requirement
-            });
-            if (entry.requirement) requirements.add(entry.requirement);
-          } else if (entry.action === 'COMPLETE_TASK' && taskMap.has(entry.taskNumber)) {
-            taskMap.get(entry.taskNumber).status = 'completed';
-          }
-        });
-        
-        const tasks = Array.from(taskMap.values()).sort((a, b) => a.number - b.number);
-        const completedTasks = tasks.filter(t => t.status === 'completed');
-        
-        console.log(`Status: ${completedTasks.length === tasks.length ? 'completed' : 'in progress'}`);
-        console.log(`Progress: ${completedTasks.length}/${tasks.length} tasks completed\n`);
-        
-        if (requirements.size > 0) {
-          console.log(`Requirements (${requirements.size}):`);
-          requirements.forEach(req => {
-            const reqTasks = tasks.filter(t => t.requirement === req);
-            const reqCompleted = reqTasks.filter(t => t.status === 'completed');
-            console.log(`  • ${req} (${reqCompleted.length}/${reqTasks.length} completed)`);
-          });
-          console.log('');
-        }
-        
-        if (tasks.length > 0) {
-          console.log('Tasks:');
-          tasks.forEach(task => {
-            const status = task.status === 'completed' ? '✅' : '⬜';
-            console.log(`  ${status} ${task.number}. ${task.description}`);
-          });
-        }
-        
-        // Show recent task log entries
-        const taskLogFile = join(statusProjectPath, 'task-log.txt');
-        if (existsSync(taskLogFile)) {
-          console.log('\nRecent Activity:');
-          const taskLog = readFileSync(taskLogFile, 'utf8');
-          const lines = taskLog.trim().split('\n');
-          const recentLines = lines.slice(-5); // Last 5 entries
-          recentLines.forEach(line => console.log(line));
-        }
-        
-        console.log(`\nProject location: ${statusProjectPath}`);
-        
-      } catch (error) {
-        console.error('Error reading project state:', error.message);
+      if (projectStatus.error) {
+        logError(projectStatus.error);
+        process.exit(1);
       }
+      
+      console.log(`Status: ${projectStatus.status}`);
+      console.log(`Progress: ${projectStatus.completedTasks}/${projectStatus.totalTasks} tasks completed\n`);
+      
+      if (projectStatus.requirements && projectStatus.requirements.length > 0) {
+        console.log(`Requirements (${projectStatus.requirements.length}):`);
+        projectStatus.requirements.forEach(req => {
+          const reqTasks = projectStatus.tasks.filter(t => t.requirement === req);
+          const reqCompleted = reqTasks.filter(t => t.status === 'completed');
+          logListItem(`${req} (${reqCompleted.length}/${reqTasks.length} completed)`);
+        });
+        console.log('');
+      }
+      
+      if (projectStatus.tasks && projectStatus.tasks.length > 0) {
+        console.log('Tasks:');
+        projectStatus.tasks.forEach(task => {
+          logCheckbox(task.status === 'completed', `${task.number}. ${task.description}`, 1);
+        });
+      }
+      
+      // Show recent task log entries
+      const taskLogFile = join(statusProjectPath, 'task-log.txt');
+      if (existsSync(taskLogFile)) {
+        console.log('\nRecent Activity:');
+        const taskLog = readFileSync(taskLogFile, 'utf8');
+        const lines = taskLog.trim().split('\n');
+        const recentLines = lines.slice(-5); // Last 5 entries
+        recentLines.forEach(line => console.log(line));
+      }
+      
+      console.log(`\nProject location: ${statusProjectPath}`);
       break;
 
     case 'fix-tests':
-      const fixTestsProject = getCurrentProject();
-      if (!fixTestsProject) {
-        console.error('No active project. Use npm run new-project or npm run change-project first.');
-        process.exit(1);
-      }
-      console.log(`\n🔍 Analyzing and fixing failing tests in ${fixTestsProject}...`);
+      const fixTestsProject = requireCurrentProject();
+      log(EMOJI.magnifier, `Analyzing and fixing failing tests in ${fixTestsProject}...`);
       console.log('Running: Read Logs → Analyze Failures → Fix Tests\n');
       await runOrchestratorNew(fixTestsProject, 'Fix failing tests to match implementation (do not change code)', 'fix-tests');
       break;
 
     default:
-      console.error('Unknown command. Run "npm run help" to see all available commands.');
-      process.exit(1);
+      exitWithError('Unknown command. Run "npm run help" to see all available commands.');
   }
-}
-
-main().catch(error => {
-  console.error('Error:', error.message);
-  process.exit(1);
 });
+
+// Run main function
+main();
