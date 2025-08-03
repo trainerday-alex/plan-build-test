@@ -24,6 +24,11 @@ import {
   createTestFile, parseTestOutput 
 } from './test-setup-utils.js';
 
+// Import new utilities from Phase 1 refactoring
+import { npmInstall, npmTest, killProcessOnPort as killPort, npmStart } from './npm-utils.js';
+import { Logger } from './logger.js';
+import { TaskManager } from './task-manager.js';
+
 const execAsync = promisify(exec);
 
 // Create PROMPTS object using template utilities
@@ -111,11 +116,10 @@ export async function executeFix(projectState, requirement, state) {
   console.log('\n🔧 Fixing issues in project...\n');
   
   // First, check if we're in the middle of a backlog
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
   let currentBacklog = null;
+  const backlogsData = projectState.getBacklogsData();
   
-  if (existsSync(backlogsFile)) {
-    const backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
+  if (backlogsData) {
     currentBacklog = backlogsData.backlogs.find(b => b.status === 'in_progress');
     
     if (currentBacklog) {
@@ -130,55 +134,8 @@ export async function executeFix(projectState, requirement, state) {
     console.log('🔄 Resuming task execution...\n');
     
     // Load existing tasks from the last architect run
-    const log = projectState.getLog();
-    const tasks = [];
-    const taskNumbers = new Set();
-    const completedTaskNumbers = new Set();
-    
-    // First, find the most recent ARCHITECT_COMPLETE to get the correct task set
-    let lastArchitectIndex = -1;
-    for (let i = log.length - 1; i >= 0; i--) {
-      if (log[i].action === 'ARCHITECT_COMPLETE') {
-        lastArchitectIndex = i;
-        break;
-      }
-    }
-    
-    // Collect completed task numbers
-    log.forEach(entry => {
-      if (entry.action === 'COMPLETE_TASK') {
-        completedTaskNumbers.add(entry.taskNumber);
-      }
-    });
-    
-    // Reconstruct tasks from the last architect run
-    if (lastArchitectIndex >= 0 && log[lastArchitectIndex].tasks) {
-      // Use tasks from ARCHITECT_COMPLETE entry
-      log[lastArchitectIndex].tasks.forEach(task => {
-        tasks.push({
-          taskNumber: task.taskNumber,
-          description: task.description,
-          test: task.test || 'npm test',
-          status: completedTaskNumbers.has(task.taskNumber) ? 'completed' : 'pending'
-        });
-      });
-    } else {
-      // Fallback: reconstruct from CREATE_TASK entries after the last ARCHITECT_COMPLETE
-      log.forEach((entry, index) => {
-        if (index > lastArchitectIndex && entry.action === 'CREATE_TASK' && !taskNumbers.has(entry.taskNumber)) {
-          tasks.push({
-            taskNumber: entry.taskNumber,
-            description: entry.description,
-            test: entry.testCommand || 'npm test',
-            status: completedTaskNumbers.has(entry.taskNumber) ? 'completed' : 'pending'
-          });
-          taskNumbers.add(entry.taskNumber);
-        }
-      });
-    }
-    
-    // Sort tasks by task number
-    tasks.sort((a, b) => a.taskNumber - b.taskNumber);
+    const taskManager = new TaskManager(projectState);
+    const tasks = taskManager.reconstructTasksFromLogs();
     state.tasks = tasks;
     
     console.log(`📋 Found ${tasks.length} tasks from current backlog`);
@@ -226,17 +183,11 @@ export async function executeFixTests(projectState, requirement, state) {
   let testOutput = '';
   
   // Always run tests to get current status
-  console.log('📦 Installing dependencies first...');
-  
   // First run npm install to ensure all dependencies are available
   try {
-    await execAsync('npm install', { 
-      cwd: projectState.projectPath,
-      timeout: 120000 
-    });
-    console.log('  ✓ Dependencies installed\n');
+    await npmInstall(projectState.projectPath);
+    console.log('');
   } catch (error) {
-    console.error('  ❌ Failed to install dependencies:', error.message);
     console.error('  ⚠️  Continuing anyway to see test errors...\n');
   }
   
@@ -492,31 +443,20 @@ export async function executeAddBacklog(projectState, requirement, state) {
   console.log('\n📋 Adding new backlog item...\n');
   
   // Load existing backlogs
-  const backlogsFile = join(projectState.projectPath, 'backlogs.json');
-  let backlogsData = { backlogs: [] };
-  
-  if (existsSync(backlogsFile)) {
-    backlogsData = JSON.parse(readFileSync(backlogsFile, 'utf8'));
-  }
+  let backlogsData = projectState.getBacklogsData() || { backlogs: [] };
   
   // Extract the backlog description from requirement
   const backlogDescription = requirement.replace(/^Add backlog:\s*/i, '');
   
   // Create simple backlog entry (could enhance with AI later)
-  const newBacklog = {
-    id: backlogsData.backlogs.length + 1,
+  const newBacklog = projectState.addBacklog({
     title: backlogDescription.split(' ').slice(0, 4).join(' '),
     description: backlogDescription,
     priority: 'medium',
     estimated_effort: 'medium',
     dependencies: [],
-    acceptance_criteria: [],
-    status: 'pending',
-    created_at: new Date().toISOString()
-  };
-  
-  backlogsData.backlogs.push(newBacklog);
-  writeFileSync(backlogsFile, JSON.stringify(backlogsData, null, 2));
+    acceptance_criteria: []
+  });
   
   console.log('✅ Added new backlog item:');
   console.log(`   ${newBacklog.id}. ${newBacklog.title}`);
