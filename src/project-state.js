@@ -1,5 +1,5 @@
 import { join } from 'path';
-import { existsSync, readFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'fs';
 import { readJsonFile, writeJsonFile, appendTextLog as appendTextLogUtil } from './file-utils.js';
 
 /**
@@ -180,5 +180,80 @@ export class ProjectState {
   // Clear the last incomplete task
   clearLastIncompleteTask() {
     // No action needed - completion is tracked via COMPLETE_TASK logs
+  }
+  
+  // ====== BACKLOGS MANAGEMENT METHODS ======
+  
+  /**
+   * Get the path to the backlogs.json file
+   * @returns {string} Path to backlogs file
+   */
+  getBacklogsFilePath() {
+    return join(this.projectPath, 'backlogs.json');
+  }
+  
+  /**
+   * Read and parse the backlogs data
+   * @returns {Object|null} Backlogs data or null if file doesn't exist
+   */
+  getBacklogsData() {
+    const backlogsFile = this.getBacklogsFilePath();
+    if (!existsSync(backlogsFile)) {
+      return null;
+    }
+    try {
+      return JSON.parse(readFileSync(backlogsFile, 'utf8'));
+    } catch (e) {
+      console.error('Error reading backlogs file:', e.message);
+      return null;
+    }
+  }
+  
+  /**
+   * Save backlogs data to file
+   * @param {Object} data - Backlogs data to save
+   */
+  saveBacklogsData(data) {
+    const backlogsFile = this.getBacklogsFilePath();
+    writeFileSync(backlogsFile, JSON.stringify(data, null, 2));
+  }
+  
+  /**
+   * Update a specific backlog's status and optional fields
+   * @param {number} backlogId - ID of the backlog to update
+   * @param {string} status - New status
+   * @param {Object} additionalFields - Additional fields to update
+   * @returns {boolean} True if updated, false if not found
+   */
+  updateBacklogStatus(backlogId, status, additionalFields = {}) {
+    const data = this.getBacklogsData();
+    if (!data) return false;
+    
+    const backlog = data.backlogs.find(b => b.id === backlogId);
+    if (!backlog) return false;
+    
+    backlog.status = status;
+    Object.assign(backlog, additionalFields);
+    
+    this.saveBacklogsData(data);
+    return true;
+  }
+  
+  /**
+   * Add a new backlog to the project
+   * @param {Object} backlog - Backlog data (description, etc.)
+   * @returns {Object} The created backlog with ID and metadata
+   */
+  addBacklog(backlog) {
+    let data = this.getBacklogsData() || { backlogs: [] };
+    const newBacklog = {
+      id: data.backlogs.length + 1,
+      status: 'pending',
+      created_at: new Date().toISOString(),
+      ...backlog
+    };
+    data.backlogs.push(newBacklog);
+    this.saveBacklogsData(data);
+    return newBacklog;
   }
 }
